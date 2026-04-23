@@ -1,0 +1,48 @@
+{
+  "name": "polymarket",
+  "version": "0.1.0",
+  "description": "Polymarket research and automation toolkit",
+  "author": "Dmytro Tuzov",
+  "license": "UNLICENSED",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=20.0.0",
+    "pnpm": ">=9.0.0"
+  },
+  "bin": {
+    "polymarket": "dist/index.js"
+  },
+  "scripts": {
+    "dev": "tsx src/index.ts",
+    "start": "node dist/index.js",
+    "build": "tsc --project tsconfig.json",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "lint": "biome check .",
+    "lint:fix": "biome check --write .",
+    "format": "biome format --write .",
+    "ci": "pnpm typecheck && pnpm lint && pnpm test"
+  },
+  "dependencies": {
+    "@polymarket/clob-client": "^5.0.0",
+    "axios": "^1.7.0",
+    "commander": "^12.0.0",
+    "dotenv": "^16.0.0",
+    "pino": "^9.0.0",
+    "viem": "^2.0.0",
+    "zod": "^3.23.0"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^1.9.0",
+    "@types/node": "^22.0.0",
+    "@vitest/coverage-v8": "^2.0.0",
+    "msw": "^2.0.0",
+    "pino-pretty": "^11.0.0",
+    "tsx": "^4.0.0",
+    "typescript": "^5.5.0",
+    "vitest": "^2.0.0"
+  }
+}
