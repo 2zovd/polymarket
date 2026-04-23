@@ -103,13 +103,22 @@ export interface Trade {
 
 // ─── Config ──────────────────────────────────────────────────────────────────
 
+export interface ClobCreds {
+  key: string;
+  secret: string;
+  passphrase: string;
+}
+
 export interface AppConfig {
   clobApiUrl: string;
   gammaApiUrl: string;
   subgraphUrl: string;
+  databasePath: string;
   privateKey: `0x${string}`;
   chainId: number;
   polymarketProxyAddress: `0x${string}` | null;
+  /** L2 API credentials — null until derive-keys is run */
+  clobCreds: ClobCreds | null;
   dryRun: boolean;
   maxOrderSizeUsdc: number;
   logLevel: string;

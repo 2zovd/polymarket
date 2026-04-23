@@ -9,17 +9,11 @@ import type { AppConfig } from '../types.js';
 // Wrapper around @polymarket/clob-client.
 //
 // Auth flow:
-// 1. L1 auth: wallet signs a message to prove ownership → derives L2 API keys
-// 2. L2 auth: API key/secret/passphrase used for order operations
+// 1. L1 auth: wallet signs → derives L2 API keys (run once via `orders derive-keys`)
+// 2. L2 auth: CLOB_API_KEY / SECRET / PASSPHRASE for all order operations
 //
-// For read-only operations (orderbook, market data) no credentials needed.
-// For order operations you must call initApiKeys() first OR inject creds via env.
-
-export interface ClobApiKeys {
-  key: string;
-  secret: string;
-  passphrase: string;
-}
+// Read-only ops (orderbook, market data) require no credentials.
+// Order ops require clobCreds in config — fail fast if missing.
 
 export type ClobClientWrapper = ReturnType<typeof createClobClient>;
 
@@ -34,22 +28,32 @@ export function createClobClient(config: AppConfig, log: Logger) {
     transport: http(config.polygonRpcUrl),
   });
 
-  // Read-only client — no credentials. Used for market data and orderbook.
+  const apiCreds: ApiKeyCreds | undefined = config.clobCreds
+    ? {
+        key: config.clobCreds.key,
+        secret: config.clobCreds.secret,
+        passphrase: config.clobCreds.passphrase,
+      }
+    : undefined;
+
+  // Read-only client — no credentials needed.
   const readonlyClient = new ClobClient(config.clobApiUrl, clobChain);
+
+  // Authed client — lazily created, reuses credentials from config.
+  const authedClient = new ClobClient(config.clobApiUrl, clobChain, walletClient, apiCreds);
 
   const childLog = log.child({ module: 'clob' });
 
-  // Authenticated client — lazily created when order operations are needed.
-  let authedClient: ClobClient | null = null;
-
-  function getAuthedClient(creds?: ApiKeyCreds): ClobClient {
-    if (authedClient) return authedClient;
-    authedClient = new ClobClient(config.clobApiUrl, clobChain, walletClient, creds);
-    return authedClient;
+  function requireCreds(): void {
+    if (!config.clobCreds) {
+      throw new Error(
+        'CLOB L2 credentials not set. Run `pnpm dev orders derive-keys` once and add the output to ~/.polymarket-secrets.',
+      );
+    }
   }
 
   return {
-    // ─── Read-only (no auth) ────────────────────────────────────────────
+    // ─── Read-only ──────────────────────────────────────────────────────
 
     async getOrderbook(tokenId: string) {
       childLog.debug({ tokenId }, 'Fetching orderbook');
@@ -61,43 +65,52 @@ export function createClobClient(config: AppConfig, log: Logger) {
       return book;
     },
 
-    // ─── Authenticated ──────────────────────────────────────────────────
+    // ─── L1 key derivation (no L2 creds needed, uses wallet signature) ─
 
-    /** Derives L2 API keys from the wallet signature. Call once and store the result. */
-    async deriveApiKeys(creds?: ApiKeyCreds): Promise<ApiKeyCreds> {
-      childLog.info('Deriving L2 API keys from wallet');
-      const client = getAuthedClient(creds);
-      const derived = await client.createOrDeriveApiKey();
-      childLog.info({ key: derived.key }, 'API keys derived');
+    async deriveApiKeys(): Promise<ApiKeyCreds> {
+      childLog.info('Deriving L2 API keys from wallet signature');
+      const derived = await authedClient.createOrDeriveApiKey();
+      childLog.info(
+        { key: derived.key },
+        'L2 API keys derived — save these to ~/.polymarket-secrets',
+      );
       return derived;
     },
 
-    async getOpenOrders(creds?: ApiKeyCreds) {
-      const client = getAuthedClient(creds);
+    // ─── Authenticated (require L2 creds) ──────────────────────────────
+
+    async getOpenOrders() {
+      requireCreds();
       childLog.debug('Fetching open orders');
-      const orders = await client.getOpenOrders();
+      const orders = await authedClient.getOpenOrders();
       childLog.info({ count: orders.length }, 'Open orders fetched');
       return orders;
     },
 
-    async getTradeHistory(creds?: ApiKeyCreds) {
-      const client = getAuthedClient(creds);
+    async getTradeHistory() {
+      requireCreds();
       childLog.debug('Fetching trade history');
-      const trades = await client.getTrades();
+      const trades = await authedClient.getTrades();
       childLog.info({ count: trades.length }, 'Trade history fetched');
       return trades;
     },
 
+    async getBalanceAllowance() {
+      requireCreds();
+      return authedClient.getBalanceAllowance();
+    },
+
     /**
      * Place a GTC limit order.
-     *
-     * Guards: DRY_RUN and MAX_ORDER_SIZE_USDC are checked independently.
-     * In dry-run mode: logs the intent and returns without submitting.
+     * DRY_RUN and MAX_ORDER_SIZE_USDC are checked independently — both guards active.
      */
-    async placeLimitOrder(
-      params: { tokenId: string; side: 'BUY' | 'SELL'; price: number; size: number },
-      creds?: ApiKeyCreds,
-    ): Promise<{ orderId: string; dryRun: boolean }> {
+    async placeLimitOrder(params: {
+      tokenId: string;
+      side: 'BUY' | 'SELL';
+      price: number;
+      size: number;
+    }): Promise<{ orderId: string; dryRun: boolean }> {
+      requireCreds();
       childLog.info({ ...params, dryRun: config.dryRun }, 'Placing limit order');
 
       if (config.dryRun) {
@@ -111,8 +124,7 @@ export function createClobClient(config: AppConfig, log: Logger) {
         );
       }
 
-      const client = getAuthedClient(creds);
-      const result = await client.createAndPostOrder({
+      const result = await authedClient.createAndPostOrder({
         tokenID: params.tokenId,
         side: params.side === 'BUY' ? ClobSide.BUY : ClobSide.SELL,
         price: params.price,
@@ -124,13 +136,13 @@ export function createClobClient(config: AppConfig, log: Logger) {
       return { orderId, dryRun: false };
     },
 
-    async cancelOrder(orderId: string, creds?: ApiKeyCreds): Promise<void> {
+    async cancelOrder(orderId: string): Promise<void> {
+      requireCreds();
       if (config.dryRun) {
         childLog.warn({ orderId }, 'DRY_RUN=true — cancel NOT submitted');
         return;
       }
-      const client = getAuthedClient(creds);
-      await client.cancelOrder({ orderID: orderId });
+      await authedClient.cancelOrder({ orderID: orderId });
       childLog.info({ orderId }, 'Order cancelled');
     },
   };

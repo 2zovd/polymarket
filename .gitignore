@@ -49,7 +49,10 @@ venv/
 # Jupyter
 .ipynb_checkpoints/
 
-# Data (ML research artifacts — add intentionally when ready)
+# Data (DB file gitignored; directory structure tracked via .gitkeep)
+data/*.db
+data/*.db-shm
+data/*.db-wal
 data/raw/
 data/processed/
 data/cache/
