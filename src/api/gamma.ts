@@ -8,6 +8,24 @@ import type { AppConfig, Market } from '../types.js';
 
 export type GammaClient = ReturnType<typeof createGammaClient>;
 
+// Raw trade shape returned by Gamma API /trades endpoint.
+export interface GammaTrade {
+  id: string;
+  market: string;
+  asset_id: string;
+  side: 'BUY' | 'SELL';
+  size: string;
+  price: string;
+  fee_rate_bps: string;
+  status: string;
+  match_time: string;
+  outcome: string;
+  maker_address: string;
+  transaction_hash: string;
+  taker_order_id: string;
+  trader_side?: string;
+}
+
 export function createGammaClient(config: AppConfig, log: Logger) {
   const http: AxiosInstance = axios.create({
     baseURL: config.gammaApiUrl,
@@ -27,6 +45,8 @@ export function createGammaClient(config: AppConfig, log: Logger) {
       active?: boolean;
       closed?: boolean;
       tag?: string;
+      order?: string;
+      ascending?: boolean;
     }): Promise<Market[]> {
       childLog.debug({ params }, 'Fetching markets');
       const { data } = await http.get<Market[]>('/markets', { params });
@@ -37,6 +57,20 @@ export function createGammaClient(config: AppConfig, log: Logger) {
     async getMarket(slugOrConditionId: string): Promise<Market> {
       childLog.debug({ slugOrConditionId }, 'Fetching market');
       const { data } = await http.get<Market>(`/markets/${slugOrConditionId}`);
+      return data;
+    },
+
+    /**
+     * Public trade history — no auth required.
+     * Supports filtering by market, maker address, and pagination cursor.
+     */
+    async getTrades(params: {
+      market?: string;
+      maker?: string;
+      limit?: number;
+      offset?: number;
+    }): Promise<GammaTrade[]> {
+      const { data } = await http.get<GammaTrade[]>('/trades', { params });
       return data;
     },
 

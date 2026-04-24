@@ -1,15 +1,16 @@
 import { schedule } from 'node-cron';
 import type { Logger } from 'pino';
+import type { DataApiClient } from './api/data.js';
 import type { GammaClient } from './api/gamma.js';
-import { collectMarkets } from './collectors/markets.js';
+import { collectMarkets, collectResolvedMarkets } from './collectors/markets.js';
 import { collectPositions } from './collectors/positions.js';
 import { collectTrades } from './collectors/trades.js';
+import { collectWalletStats } from './collectors/wallets.js';
 import type { DbClient } from './db/index.js';
-import type { SubgraphClient } from './lib/subgraph.js';
 
 export function startCron(
   gamma: GammaClient,
-  subgraph: SubgraphClient,
+  dataApi: DataApiClient,
   db: DbClient,
   log: Logger,
 ): void {
@@ -19,19 +20,18 @@ export function startCron(
     fn().catch((err) => childLog.error({ name, err }, 'Collector failed'));
   }
 
-  // Markets — every 30 min
   schedule('*/30 * * * *', () => runSafe('markets', () => collectMarkets(gamma, db, log)));
-
-  // Trades — every 15 min
-  schedule('*/15 * * * *', () => runSafe('trades', () => collectTrades(subgraph, db, log)));
-
-  // Positions — every hour
+  schedule('*/15 * * * *', () => runSafe('trades', () => collectTrades(dataApi, db, log)));
   schedule('0 * * * *', () => runSafe('positions', () => collectPositions(gamma, db, log)));
+  // Resolved market outcomes + wallet scoring every 6 hours
+  schedule('0 */6 * * *', () =>
+    runSafe('resolved-markets', () => collectResolvedMarkets(gamma, db, log)),
+  );
+  schedule('30 */6 * * *', () => runSafe('wallets', () => collectWalletStats(dataApi, db, log)));
 
-  childLog.info('Cron scheduler started (markets/30min, trades/15min, positions/1h)');
+  childLog.info('Cron scheduler started (markets/30min, trades/15min, positions/1h, wallets/6h)');
 
-  // Run all collectors immediately on startup to populate DB without waiting for first tick.
   runSafe('markets:init', () => collectMarkets(gamma, db, log));
-  runSafe('trades:init', () => collectTrades(subgraph, db, log));
+  runSafe('trades:init', () => collectTrades(dataApi, db, log));
   runSafe('positions:init', () => collectPositions(gamma, db, log));
 }

@@ -6,7 +6,9 @@ import type { AppConfig } from '../types.js';
 // Primary source for historical on-chain trade data.
 // Subgraph schema: github.com/Polymarket/polymarket-subgraph
 
-export type SubgraphClient = ReturnType<typeof createSubgraphClient>;
+export interface SubgraphClient {
+  getTrades(sinceTimestamp: number, maxRecords?: number): Promise<SubgraphTradeRecord[]>;
+}
 
 // Raw shape returned by the subgraph — field names are snake_case per GraphQL schema.
 interface SubgraphTrade {
@@ -64,7 +66,7 @@ const TRADES_QUERY = gql`
   }
 `;
 
-export function createSubgraphClient(config: AppConfig, log: Logger): SubgraphClient {
+export function createSubgraphClient(config: AppConfig, log: Logger) {
   const client = new GraphQLClient(config.subgraphUrl);
   const childLog = log.child({ module: 'subgraph' });
 
@@ -78,7 +80,10 @@ export function createSubgraphClient(config: AppConfig, log: Logger): SubgraphCl
       const records: SubgraphTradeRecord[] = [];
       let skip = 0;
 
-      childLog.info({ since: new Date(sinceTimestamp * 1000).toISOString(), maxRecords }, 'Fetching subgraph trades');
+      childLog.info(
+        { since: new Date(sinceTimestamp * 1000).toISOString(), maxRecords },
+        'Fetching subgraph trades',
+      );
 
       while (records.length < maxRecords) {
         const data = await client.request<SubgraphTradesResponse>(TRADES_QUERY, {

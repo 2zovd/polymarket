@@ -17,6 +17,9 @@ export const markets = sqliteTable('markets', {
   active: integer('active', { mode: 'boolean' }).notNull().default(false),
   closed: integer('closed', { mode: 'boolean' }).notNull().default(false),
   resolvedAt: text('resolved_at'), // ISO string, null until resolved
+  // JSON string arrays from Gamma API, e.g. '["1","0"]' (outcome 0 won) or '["0","1"]'
+  outcomePrices: text('outcome_prices'),
+  outcomes: text('outcomes'),
   updatedAt: text('updated_at').notNull(),
 });
 
@@ -66,7 +69,42 @@ export const walletStats = sqliteTable('wallet_stats', {
   pValue: real('p_value'),
   // true when p < 0.05 AND roi > 0.05 AND brierScore < 0.22 AND resolvedTrades >= 30
   isSharp: integer('is_sharp', { mode: 'boolean' }).notNull().default(false),
+  // true when p < 0.05 AND roi > 0 AND resolvedTrades >= 30 (ignores Brier — copy trading signal)
+  isProfitable: integer('is_profitable', { mode: 'boolean' }).notNull().default(false),
   updatedAt: text('updated_at').notNull(),
+});
+
+// ─── Watched Positions (whale position snapshots for change detection) ────────
+
+export const watchedPositions = sqliteTable('watched_positions', {
+  walletAddress: text('wallet_address').notNull(),
+  tokenId: text('token_id').notNull(),
+  conditionId: text('condition_id').notNull(),
+  outcome: text('outcome').notNull().default(''),
+  size: real('size').notNull().default(0),
+  avgPrice: real('avg_price').notNull().default(0),
+  updatedAt: text('updated_at').notNull(),
+});
+
+// ─── Copy Trading Signals ─────────────────────────────────────────────────────
+
+export const signals = sqliteTable('signals', {
+  id: integer('id', { mode: 'number' }).primaryKey({ autoIncrement: true }),
+  walletAddress: text('wallet_address').notNull(),
+  conditionId: text('condition_id').notNull(),
+  tokenId: text('token_id').notNull(),
+  outcome: text('outcome').notNull().default(''),
+  whaleAvgPrice: real('whale_avg_price').notNull(),
+  currentAsk: real('current_ask').notNull(),
+  edge: real('edge').notNull(), // whaleAvgPrice - currentAsk
+  kellySize: real('kelly_size').notNull(), // USDC calculated by Kelly
+  executedSize: real('executed_size').notNull().default(0),
+  orderId: text('order_id'), // null if dry-run or skipped
+  // 'executed' | 'skipped' | 'dry-run' | 'error'
+  status: text('status').notNull(),
+  skipReason: text('skip_reason'), // reason if status = 'skipped'
+  dryRun: integer('dry_run', { mode: 'boolean' }).notNull().default(true),
+  createdAt: text('created_at').notNull(),
 });
 
 // ─── Anomalies ────────────────────────────────────────────────────────────────

@@ -2,10 +2,12 @@
 
 import { createRequire } from 'node:module';
 import { Command } from 'commander';
+import { registerCronCommand } from './commands/cron.js';
 import { registerMarketsCommand } from './commands/markets.js';
 import { registerOrderbookCommand } from './commands/orderbook.js';
 import { registerOrdersCommand } from './commands/orders.js';
 import { registerWalletCommand } from './commands/wallet.js';
+import { registerWhalesCommand } from './commands/whales.js';
 import { logger } from './lib/logger.js';
 
 const require = createRequire(import.meta.url);
@@ -22,6 +24,8 @@ registerMarketsCommand(program);
 registerOrderbookCommand(program);
 registerOrdersCommand(program);
 registerWalletCommand(program);
+registerWhalesCommand(program);
+registerCronCommand(program);
 
 program.parseAsync(process.argv).catch((err: unknown) => {
   logger.fatal({ err }, 'Unhandled CLI error');

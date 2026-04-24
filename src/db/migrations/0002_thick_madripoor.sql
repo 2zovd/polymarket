@@ -1,0 +1,1 @@
+ALTER TABLE `wallet_stats` ADD `is_profitable` integer DEFAULT false NOT NULL;

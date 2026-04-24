@@ -19,6 +19,7 @@ const privateKeySchema = z
 const EnvSchema = z.object({
   CLOB_API_URL: z.string().url().default('https://clob.polymarket.com'),
   GAMMA_API_URL: z.string().url().default('https://gamma-api.polymarket.com'),
+  DATA_API_URL: z.string().url().default('https://data-api.polymarket.com'),
   SUBGRAPH_URL: z
     .string()
     .url()
@@ -36,6 +37,15 @@ const EnvSchema = z.object({
     .transform((v) => v.toLowerCase() === 'true')
     .default('true'),
   MAX_ORDER_SIZE_USDC: z.coerce.number().positive().default(100),
+  // ─── Copy Trading ────────────────────────────────────────────────────────────
+  MONITOR_INTERVAL_SECONDS: z.coerce.number().int().positive().default(300),
+  PORTFOLIO_SIZE: z.coerce.number().positive().default(1000),
+  KELLY_CAP: z.coerce.number().positive().max(1).default(0.25),
+  MIN_WHALE_ROI: z.coerce.number().default(0.05),
+  MIN_WHALE_TRADES: z.coerce.number().int().positive().default(30),
+  MIN_WHALE_PVALUE: z.coerce.number().positive().max(1).default(0.05),
+  MIN_EDGE_PCT: z.coerce.number().default(0.01),
+  MIN_POSITION_USDC: z.coerce.number().positive().default(10),
   LOG_LEVEL: z.enum(['trace', 'debug', 'info', 'warn', 'error', 'fatal']).default('info'),
   LOG_PRETTY: z
     .string()
@@ -61,6 +71,7 @@ function loadConfig(): AppConfig {
   return {
     clobApiUrl: env.CLOB_API_URL,
     gammaApiUrl: env.GAMMA_API_URL,
+    dataApiUrl: env.DATA_API_URL,
     subgraphUrl: env.SUBGRAPH_URL,
     databasePath: env.DATABASE_PATH,
     privateKey: env.PRIVATE_KEY as `0x${string}`,
@@ -77,6 +88,14 @@ function loadConfig(): AppConfig {
       : null,
     dryRun: env.DRY_RUN,
     maxOrderSizeUsdc: env.MAX_ORDER_SIZE_USDC,
+    monitorIntervalSeconds: env.MONITOR_INTERVAL_SECONDS,
+    portfolioSize: env.PORTFOLIO_SIZE,
+    kellyCap: env.KELLY_CAP,
+    minWhaleRoi: env.MIN_WHALE_ROI,
+    minWhaleTrades: env.MIN_WHALE_TRADES,
+    minWhalePvalue: env.MIN_WHALE_PVALUE,
+    minEdgePct: env.MIN_EDGE_PCT,
+    minPositionUsdc: env.MIN_POSITION_USDC,
     logLevel: env.LOG_LEVEL,
     logPretty: env.LOG_PRETTY,
     polygonRpcUrl: env.POLYGON_RPC_URL,

@@ -83,10 +83,7 @@ export async function collectPositions(
       };
 
       if (existing) {
-        await db
-          .update(positions)
-          .set(row)
-          .where(eq(positions.walletAddress, walletAddress));
+        await db.update(positions).set(row).where(eq(positions.walletAddress, walletAddress));
       } else {
         await db.insert(positions).values(row);
       }

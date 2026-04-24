@@ -55,6 +55,30 @@ export function createClobClient(config: AppConfig, log: Logger) {
   return {
     // ─── Read-only ──────────────────────────────────────────────────────
 
+    /**
+     * All trades for a market — L2 auth required (CLOB enforces this even for public data).
+     * Paginates automatically; returns up to maxRecords trades.
+     */
+    async getMarketTrades(conditionId: string, afterCursor?: string, maxRecords = 5_000) {
+      requireCreds();
+      childLog.debug({ conditionId }, 'Fetching market trades');
+      const all: Awaited<ReturnType<typeof authedClient.getTrades>> = [];
+      let cursor = afterCursor;
+
+      while (all.length < maxRecords) {
+        const { trades: page, next_cursor } = await authedClient.getTradesPaginated(
+          { market: conditionId },
+          cursor,
+        );
+        all.push(...page);
+        if (!next_cursor || next_cursor === 'LTE=') break;
+        cursor = next_cursor;
+      }
+
+      childLog.debug({ conditionId, fetched: all.length }, 'Market trades fetched');
+      return all;
+    },
+
     async getOrderbook(tokenId: string) {
       childLog.debug({ tokenId }, 'Fetching orderbook');
       const book = await readonlyClient.getOrderBook(tokenId);

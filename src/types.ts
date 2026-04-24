@@ -5,21 +5,30 @@
 
 export type MarketStatus = 'active' | 'closed' | 'resolved' | 'cancelled';
 
+// Gamma API market shape — matches actual response from /markets endpoint.
+// Field names are as returned by the API (some quirks: questionID vs questionId).
 export interface Market {
   conditionId: string;
-  questionId: string;
+  // Gamma returns questionID (capital ID); questionId alias kept for compatibility
+  questionID?: string;
+  questionId?: string;
   question: string;
-  description: string;
+  description?: string;
   slug: string;
-  status: MarketStatus;
-  endDateIso: string;
-  tokens: Token[];
+  // Gamma does not return a status string — derive from active/closed flags
+  status?: MarketStatus;
+  // Gamma returns either endDateIso ("2026-07-31") or endDate (ISO datetime) or both
+  endDateIso?: string;
+  endDate?: string;
+  // Tokens are returned inline by /markets but shape varies; parsed separately
+  tokens?: Token[];
+  clobTokenIds?: string; // JSON-encoded array of token IDs
+  // JSON string arrays: outcomePrices=["1","0"] means outcome 0 won; ["0","1"] means outcome 1 won
+  outcomePrices?: string;
+  outcomes?: string;
   /** Volume in USDC (full units) */
   volumeNum: number;
   liquidityNum: number;
-  /** Maker fee rate, e.g. 0.001 = 0.1% */
-  makerBaseFee: number;
-  takerBaseFee: number;
   active: boolean;
   closed: boolean;
 }
@@ -112,6 +121,7 @@ export interface ClobCreds {
 export interface AppConfig {
   clobApiUrl: string;
   gammaApiUrl: string;
+  dataApiUrl: string;
   subgraphUrl: string;
   databasePath: string;
   privateKey: `0x${string}`;
@@ -121,6 +131,14 @@ export interface AppConfig {
   clobCreds: ClobCreds | null;
   dryRun: boolean;
   maxOrderSizeUsdc: number;
+  monitorIntervalSeconds: number;
+  portfolioSize: number;
+  kellyCap: number;
+  minWhaleRoi: number;
+  minWhaleTrades: number;
+  minWhalePvalue: number;
+  minEdgePct: number;
+  minPositionUsdc: number;
   logLevel: string;
   logPretty: boolean;
   polygonRpcUrl: string;
