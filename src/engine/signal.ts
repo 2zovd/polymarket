@@ -34,6 +34,7 @@ export async function generateSignal(
   clob: ClobClientWrapper,
   db: DbClient,
   config: AppConfig,
+  openTokenIds: Set<string> = new Set(),
 ): Promise<Signal> {
   const base = {
     walletAddress: position.walletAddress,
@@ -45,6 +46,11 @@ export async function generateSignal(
 
   function skip(reason: string): Signal {
     return { ...base, currentAsk: 0, edge: 0, kellySize: 0, status: 'skipped', skipReason: reason };
+  }
+
+  // Risk control — skip if we already hold this token
+  if (openTokenIds.has(position.tokenId)) {
+    return skip('already_positioned');
   }
 
   // Quality gate — wallet must meet all thresholds
@@ -61,15 +67,22 @@ export async function generateSignal(
     return skip(`position_too_small: ${position.initialValue.toFixed(2)} USDC`);
   }
 
-  // Market must be active in our DB
+  // Market must be active in our DB and have sufficient time remaining
   const market = await db
-    .select({ active: markets.active })
+    .select({ active: markets.active, endDateIso: markets.endDateIso })
     .from(markets)
     .where(eq(markets.conditionId, position.conditionId))
     .get();
 
   if (!market?.active) {
     return skip('market_not_active');
+  }
+
+  if (market.endDateIso) {
+    const msRemaining = new Date(market.endDateIso).getTime() - Date.now();
+    if (msRemaining < config.minMarketHoursRemaining * 60 * 60 * 1000) {
+      return skip(`market_expiring_soon: ${(msRemaining / 3_600_000).toFixed(1)}h left`);
+    }
   }
 
   // Get current ask from orderbook

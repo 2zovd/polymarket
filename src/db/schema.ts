@@ -111,6 +111,26 @@ export const signals = sqliteTable('signals', {
   createdAt: text('created_at').notNull(),
 });
 
+// ─── Open Positions (copy trades we've placed, tracked until resolution) ─────
+
+export const openPositions = sqliteTable('open_positions', {
+  id: integer('id', { mode: 'number' }).primaryKey({ autoIncrement: true }),
+  signalId: integer('signal_id').notNull(), // FK → signals.id
+  tokenId: text('token_id').notNull(),
+  conditionId: text('condition_id').notNull(),
+  outcome: text('outcome').notNull().default(''),
+  // USDC entered (kellySize for dry-run, executedSize for live)
+  size: real('size').notNull(),
+  entryPrice: real('entry_price').notNull(),
+  entryAt: text('entry_at').notNull(),
+  isDryRun: integer('is_dry_run', { mode: 'boolean' }).notNull().default(true),
+  // 'open' | 'won' | 'lost'
+  status: text('status').notNull().default('open'),
+  payout: real('payout'), // USDC received (null until resolved)
+  pnl: real('pnl'), // payout − size (null until resolved)
+  resolvedAt: text('resolved_at'),
+});
+
 // ─── Anomalies ────────────────────────────────────────────────────────────────
 
 export const anomalies = sqliteTable('anomalies', {

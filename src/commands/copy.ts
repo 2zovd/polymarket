@@ -1,9 +1,9 @@
 import type { Command } from 'commander';
-import { desc, eq } from 'drizzle-orm';
+import { desc, eq, inArray } from 'drizzle-orm';
 import { createClobClient } from '../api/clob.js';
 import { createDataApiClient } from '../api/data.js';
 import { createDb } from '../db/index.js';
-import { signals } from '../db/schema.js';
+import { openPositions, signals } from '../db/schema.js';
 import { runMonitorCycle, startMonitor } from '../engine/monitor.js';
 import { config } from '../lib/config.js';
 import { logger } from '../lib/logger.js';
@@ -94,5 +94,69 @@ export function registerCopyCommand(program: Command): void {
         .map(([k, v]) => `${k}: ${v}`)
         .join(', ');
       print(`\n${rows.length} signals — ${summary}`);
+    });
+
+  copy
+    .command('positions')
+    .description('Show tracked open positions and resolved P&L')
+    .option('--history', 'Show resolved positions (won/lost) instead of open ones')
+    .action(async (opts: { history?: boolean }) => {
+      const db = createDb(config.databasePath);
+
+      const statusFilter = opts.history
+        ? inArray(openPositions.status, ['won', 'lost'])
+        : eq(openPositions.status, 'open');
+
+      const rows = await db
+        .select()
+        .from(openPositions)
+        .where(statusFilter)
+        .orderBy(desc(openPositions.entryAt))
+        .all();
+
+      if (rows.length === 0) {
+        print(opts.history ? 'No resolved positions yet.' : 'No open positions.');
+        return;
+      }
+
+      const header = opts.history
+        ? `\n${'Outcome'.padEnd(16)} ${'Size$'.padStart(7)} ${'Entry'.padStart(6)} ${'Payout$'.padStart(8)} ${'P&L$'.padStart(7)} ${'Status'.padEnd(6)} ${'Mode'.padEnd(8)} ${'Resolved'.padEnd(24)}`
+        : `\n${'Outcome'.padEnd(16)} ${'Size$'.padStart(7)} ${'Entry'.padStart(6)} ${'Shares'.padStart(8)} ${'Mode'.padEnd(8)} ${'Entered'.padEnd(24)}`;
+
+      print(header);
+      print('─'.repeat(opts.history ? 90 : 80));
+
+      let totalExposure = 0;
+      let totalPnl = 0;
+
+      for (const r of rows) {
+        const outcome = r.outcome.slice(0, 16).padEnd(16);
+        const size = r.size.toFixed(2).padStart(7);
+        const entry = r.entryPrice.toFixed(3).padStart(6);
+        const mode = (r.isDryRun ? 'dry-run' : 'live').padEnd(8);
+        totalExposure += r.size;
+
+        if (opts.history) {
+          const payout = (r.payout ?? 0).toFixed(2).padStart(8);
+          const pnl = r.pnl !== null ? r.pnl.toFixed(2) : 'n/a';
+          const pnlStr = (r.pnl !== null && r.pnl >= 0 ? `+${pnl}` : pnl).padStart(7);
+          if (r.pnl !== null) totalPnl += r.pnl;
+          print(
+            `${outcome} ${size} ${entry} ${payout} ${pnlStr} ${r.status.padEnd(6)} ${mode} ${r.resolvedAt ?? ''}`,
+          );
+        } else {
+          const shares = (r.size / r.entryPrice).toFixed(1).padStart(8);
+          print(`${outcome} ${size} ${entry} ${shares} ${mode} ${r.entryAt}`);
+        }
+      }
+
+      print('─'.repeat(opts.history ? 90 : 80));
+      if (opts.history) {
+        print(
+          `${rows.length} positions | Total P&L: ${totalPnl >= 0 ? '+' : ''}${totalPnl.toFixed(2)} USDC`,
+        );
+      } else {
+        print(`${rows.length} open positions | Total exposure: $${totalExposure.toFixed(2)} USDC`);
+      }
     });
 }

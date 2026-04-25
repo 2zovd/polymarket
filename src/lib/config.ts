@@ -41,7 +41,7 @@ const EnvSchema = z.object({
   MONITOR_INTERVAL_SECONDS: z.coerce.number().int().positive().default(300),
   PORTFOLIO_SIZE: z.coerce.number().positive().default(1000),
   KELLY_CAP: z.coerce.number().positive().max(1).default(0.25),
-  MIN_WHALE_ROI: z.coerce.number().default(0.05),
+  MIN_WHALE_ROI: z.coerce.number().default(0.02),
   MIN_WHALE_TRADES: z.coerce.number().int().positive().default(30),
   MIN_WHALE_PVALUE: z.coerce.number().positive().max(1).default(0.05),
   MIN_EDGE_PCT: z.coerce.number().default(0.01),
@@ -56,6 +56,10 @@ const EnvSchema = z.object({
   TELEGRAM_BOT_TOKEN: z.string().optional(),
   TELEGRAM_CHAT_ID: z.string().optional(),
   DUNE_API_KEY: z.string().optional(),
+  MAX_OPEN_POSITIONS: z.coerce.number().int().positive().default(20),
+  // Skip markets closing within this many hours — filters 5-min micro-markets
+  MIN_MARKET_HOURS_REMAINING: z.coerce.number().nonnegative().default(4),
+  STREAM_INTERVAL_SECONDS: z.coerce.number().int().positive().default(60),
 });
 
 function loadConfig(): AppConfig {
@@ -106,6 +110,9 @@ function loadConfig(): AppConfig {
     telegramBotToken: env.TELEGRAM_BOT_TOKEN ?? null,
     telegramChatId: env.TELEGRAM_CHAT_ID ?? null,
     duneApiKey: env.DUNE_API_KEY ?? null,
+    maxOpenPositions: env.MAX_OPEN_POSITIONS,
+    minMarketHoursRemaining: env.MIN_MARKET_HOURS_REMAINING,
+    streamIntervalSeconds: env.STREAM_INTERVAL_SECONDS,
   };
 }
 

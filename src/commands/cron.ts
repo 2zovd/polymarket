@@ -17,7 +17,7 @@ export function registerCronCommand(program: Command): void {
       const dataApi = createDataApiClient(config, logger);
       const db = createDb(config.databasePath);
 
-      startCron(gamma, dataApi, db, logger);
+      startCron(gamma, dataApi, db, logger, config.duneApiKey);
 
       process.on('SIGINT', () => {
         logger.info('Shutting down cron scheduler');
