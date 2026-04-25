@@ -1,4 +1,4 @@
-import { integer, real, sqliteTable, text } from 'drizzle-orm/sqlite-core';
+import { integer, primaryKey, real, sqliteTable, text } from 'drizzle-orm/sqlite-core';
 
 // ─── Markets ──────────────────────────────────────────────────────────────────
 
@@ -76,15 +76,19 @@ export const walletStats = sqliteTable('wallet_stats', {
 
 // ─── Watched Positions (whale position snapshots for change detection) ────────
 
-export const watchedPositions = sqliteTable('watched_positions', {
-  walletAddress: text('wallet_address').notNull(),
-  tokenId: text('token_id').notNull(),
-  conditionId: text('condition_id').notNull(),
-  outcome: text('outcome').notNull().default(''),
-  size: real('size').notNull().default(0),
-  avgPrice: real('avg_price').notNull().default(0),
-  updatedAt: text('updated_at').notNull(),
-});
+export const watchedPositions = sqliteTable(
+  'watched_positions',
+  {
+    walletAddress: text('wallet_address').notNull(),
+    tokenId: text('token_id').notNull(),
+    conditionId: text('condition_id').notNull(),
+    outcome: text('outcome').notNull().default(''),
+    size: real('size').notNull().default(0),
+    avgPrice: real('avg_price').notNull().default(0),
+    updatedAt: text('updated_at').notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.walletAddress, t.tokenId] })],
+);
 
 // ─── Copy Trading Signals ─────────────────────────────────────────────────────
 

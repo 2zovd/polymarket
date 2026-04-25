@@ -1,9 +1,11 @@
+import { readFileSync } from 'node:fs';
 import type { Command } from 'commander';
 import { desc, eq, or } from 'drizzle-orm';
 import { createDataApiClient } from '../api/data.js';
+import { createDuneClient, extractAddresses } from '../api/dune.js';
 import { createGammaClient } from '../api/gamma.js';
 import { collectResolvedMarkets } from '../collectors/markets.js';
-import { collectWalletStats } from '../collectors/wallets.js';
+import { collectWalletStats, seedWallets } from '../collectors/wallets.js';
 import { createDb } from '../db/index.js';
 import { walletStats } from '../db/schema.js';
 import { config } from '../lib/config.js';
@@ -29,6 +31,53 @@ export function registerWhalesCommand(program: Command): void {
 
       logger.info('Scoring wallet activity...');
       await collectWalletStats(dataApi, db, logger);
+    });
+
+  whales
+    .command('discover')
+    .description('Fetch top profitable wallets from Dune Analytics and seed into DB')
+    .option(
+      '--query <id>',
+      'Dune query ID to fetch (default: 6979866 — top profitable wallets)',
+      '6979866',
+    )
+    .option('--limit <n>', 'Max rows to fetch from Dune', '500')
+    .action(async (opts: { query: string; limit: string }) => {
+      if (!config.duneApiKey) {
+        print('DUNE_API_KEY not set. Add it to ~/.polymarket-secrets and restart.');
+        return;
+      }
+
+      const queryId = Number.parseInt(opts.query, 10);
+      const limit = Number.parseInt(opts.limit, 10);
+
+      print(`Fetching Dune query ${queryId} (limit: ${limit})...`);
+      const dune = createDuneClient(config.duneApiKey);
+
+      let result: Awaited<ReturnType<typeof dune.getQueryResults>>;
+      try {
+        result = await dune.getQueryResults(queryId, limit);
+      } catch (err) {
+        logger.error({ err }, 'Dune API request failed');
+        print('Failed to fetch from Dune. Check your DUNE_API_KEY and query ID.');
+        return;
+      }
+
+      const addresses = extractAddresses(result.rows);
+      if (addresses.length === 0) {
+        print(`No Ethereum addresses found in query ${queryId} results.`);
+        print(`Columns available: ${result.metadata?.column_names?.join(', ') ?? 'unknown'}`);
+        return;
+      }
+
+      print(`Found ${addresses.length} unique addresses from ${result.rows.length} rows`);
+      print('Scoring against resolved markets...');
+
+      const dataApi = createDataApiClient(config, logger);
+      const db = createDb(config.databasePath);
+      await seedWallets(addresses, dataApi, db, logger);
+
+      print('Done. Run: pnpm dev whales top --profitable');
     });
 
   whales
@@ -84,6 +133,29 @@ export function registerWhalesCommand(program: Command): void {
       const sharpCount = rows.filter((r) => r.isSharp).length;
       const profCount = rows.filter((r) => r.isProfitable).length;
       print(`\n${rows.length} wallets shown — sharp: ${sharpCount}, profitable: ${profCount}`);
+    });
+
+  whales
+    .command('seed <file>')
+    .description('Score wallets from a CSV/TXT file of addresses (e.g. Dune Analytics export)')
+    .action(async (file: string) => {
+      const content = readFileSync(file, 'utf8');
+      // Extract all Ethereum addresses from file regardless of CSV structure
+      const addresses = [...new Set(content.match(/0x[0-9a-fA-F]{40}/gi) ?? [])].map((a) =>
+        a.toLowerCase(),
+      );
+
+      if (addresses.length === 0) {
+        print('No Ethereum addresses found in file.');
+        return;
+      }
+
+      print(`Found ${addresses.length} unique addresses — fetching activity and scoring...`);
+      const dataApi = createDataApiClient(config, logger);
+      const db = createDb(config.databasePath);
+
+      await seedWallets(addresses, dataApi, db, logger);
+      print('Done. Run: pnpm dev whales top --profitable');
     });
 
   whales

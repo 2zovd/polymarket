@@ -52,6 +52,10 @@ const EnvSchema = z.object({
     .transform((v) => v.toLowerCase() === 'true')
     .default('false'),
   POLYGON_RPC_URL: z.string().url().default('https://polygon-rpc.com'),
+  // ─── Telegram Alerts (optional) ──────────────────────────────────────────────
+  TELEGRAM_BOT_TOKEN: z.string().optional(),
+  TELEGRAM_CHAT_ID: z.string().optional(),
+  DUNE_API_KEY: z.string().optional(),
 });
 
 function loadConfig(): AppConfig {
@@ -99,6 +103,9 @@ function loadConfig(): AppConfig {
     logLevel: env.LOG_LEVEL,
     logPretty: env.LOG_PRETTY,
     polygonRpcUrl: env.POLYGON_RPC_URL,
+    telegramBotToken: env.TELEGRAM_BOT_TOKEN ?? null,
+    telegramChatId: env.TELEGRAM_CHAT_ID ?? null,
+    duneApiKey: env.DUNE_API_KEY ?? null,
   };
 }
 

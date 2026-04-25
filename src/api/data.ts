@@ -28,6 +28,22 @@ export interface DataApiActivity extends DataApiTrade {
   usdcSize: number;
 }
 
+export interface DataApiPosition {
+  proxyWallet: string;
+  asset: string; // tokenId
+  conditionId: string;
+  size: number;
+  avgPrice: number;
+  initialValue: number; // USDC at entry
+  curPrice: number;
+  redeemable: boolean;
+  outcome: string;
+  outcomeIndex: number;
+  title: string;
+  slug: string;
+  endDate: string;
+}
+
 export function createDataApiClient(config: AppConfig, log: Logger) {
   const http: AxiosInstance = axios.create({
     baseURL: config.dataApiUrl,
@@ -97,6 +113,17 @@ export function createDataApiClient(config: AppConfig, log: Logger) {
       }
 
       return collected;
+    },
+
+    /**
+     * Current open positions for a specific wallet address.
+     * Returns all positions in a single request (no pagination needed — typically <500 per wallet).
+     */
+    async getWalletPositions(walletAddress: string): Promise<DataApiPosition[]> {
+      const { data } = await http.get<DataApiPosition[]>('/positions', {
+        params: { user: walletAddress, limit: 500, offset: 0 },
+      });
+      return data;
     },
   };
 }

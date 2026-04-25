@@ -2,6 +2,7 @@
 
 import { createRequire } from 'node:module';
 import { Command } from 'commander';
+import { registerCopyCommand } from './commands/copy.js';
 import { registerCronCommand } from './commands/cron.js';
 import { registerMarketsCommand } from './commands/markets.js';
 import { registerOrderbookCommand } from './commands/orderbook.js';
@@ -25,6 +26,7 @@ registerOrderbookCommand(program);
 registerOrdersCommand(program);
 registerWalletCommand(program);
 registerWhalesCommand(program);
+registerCopyCommand(program);
 registerCronCommand(program);
 
 program.parseAsync(process.argv).catch((err: unknown) => {

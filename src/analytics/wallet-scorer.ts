@@ -19,7 +19,7 @@ export interface WalletScore {
   isProfitable: boolean;
 }
 
-interface ResolvedMarketMap {
+export interface ResolvedMarketMap {
   // conditionId → outcomePrices as parsed number array, e.g. [1, 0] or [0, 1]
   [conditionId: string]: number[];
 }

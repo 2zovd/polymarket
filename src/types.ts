@@ -142,4 +142,7 @@ export interface AppConfig {
   logLevel: string;
   logPretty: boolean;
   polygonRpcUrl: string;
+  telegramBotToken: string | null;
+  telegramChatId: string | null;
+  duneApiKey: string | null;
 }
