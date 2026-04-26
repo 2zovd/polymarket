@@ -11,6 +11,7 @@ import {
   refreshStaleWallets,
 } from './collectors/wallets.js';
 import type { DbClient } from './db/index.js';
+import { walletStats } from './db/schema.js';
 
 export function startCron(
   gamma: GammaClient,
@@ -52,4 +53,13 @@ export function startCron(
   runSafe('markets:init', () => collectMarkets(gamma, db, log));
   runSafe('trades:init', () => collectTrades(dataApi, db, log));
   runSafe('positions:init', () => collectPositions(gamma, db, log));
+
+  // Bootstrap resolved markets + wallet scoring if no profitable wallets exist yet (fresh DB).
+  const profitableCount = db.select().from(walletStats).all().filter((w) => w.isProfitable).length;
+  if (profitableCount === 0) {
+    childLog.info('No profitable wallets — running initial resolved-markets + wallet scoring');
+    runSafe('resolved-markets:init', () =>
+      collectResolvedMarkets(gamma, db, log).then(() => collectWalletStats(dataApi, db, log)),
+    );
+  }
 }

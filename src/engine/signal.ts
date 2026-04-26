@@ -79,7 +79,12 @@ export async function generateSignal(
   }
 
   if (market.endDateIso) {
-    const msRemaining = new Date(market.endDateIso).getTime() - Date.now();
+    // Date-only strings (YYYY-MM-DD) parse as midnight UTC — treat as end-of-day to avoid
+    // false "expired" detection for markets that run through the calendar day.
+    const dateStr = market.endDateIso.includes('T')
+      ? market.endDateIso
+      : `${market.endDateIso}T23:59:59Z`;
+    const msRemaining = new Date(dateStr).getTime() - Date.now();
     if (msRemaining < config.minMarketHoursRemaining * 60 * 60 * 1000) {
       return skip(`market_expiring_soon: ${(msRemaining / 3_600_000).toFixed(1)}h left`);
     }

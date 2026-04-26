@@ -1,4 +1,4 @@
-import { type ApiKeyCreds, Chain, ClobClient } from '@polymarket/clob-client';
+import { type ApiKeyCreds, Chain, ClobClient, SignatureType } from '@polymarket/clob-client';
 import { Side as ClobSide } from '@polymarket/clob-client';
 import type { Logger } from 'pino';
 import { http, createWalletClient } from 'viem';
@@ -39,8 +39,17 @@ export function createClobClient(config: AppConfig, log: Logger) {
   // Read-only client — no credentials needed.
   const readonlyClient = new ClobClient(config.clobApiUrl, clobChain);
 
-  // Authed client — lazily created, reuses credentials from config.
-  const authedClient = new ClobClient(config.clobApiUrl, clobChain, walletClient, apiCreds);
+  // Authed client. When a proxy wallet is configured (Magic.link / email accounts),
+  // SignatureType.POLY_PROXY is required so the CLOB checks the proxy's balance.
+  const sigType = config.polymarketProxyAddress ? SignatureType.POLY_PROXY : SignatureType.EOA;
+  const authedClient = new ClobClient(
+    config.clobApiUrl,
+    clobChain,
+    walletClient,
+    apiCreds,
+    sigType,
+    config.polymarketProxyAddress ?? undefined,
+  );
 
   const childLog = log.child({ module: 'clob' });
 
