@@ -1,4 +1,4 @@
-import { and, eq, gt } from 'drizzle-orm';
+import { and, eq, gt, gte } from 'drizzle-orm';
 import type { Logger } from 'pino';
 import type { ClobClientWrapper } from '../api/clob.js';
 import type { DataApiClient, DataApiPosition } from '../api/data.js';
@@ -22,6 +22,7 @@ async function loadWhaleWallets(db: DbClient, config: AppConfig) {
       and(
         eq(walletStats.isProfitable, true),
         gt(walletStats.resolvedTrades, config.minWhaleTrades),
+        gte(walletStats.roi, config.minWhaleRoi),
       ),
     )
     .all();
