@@ -8,15 +8,22 @@ function buildMessage(signal: Signal, result: ExecutionResult): string {
     result.status === 'executed' ? '✅' : result.status === 'dry-run' ? '🧪' : '⏭️';
   const wallet = signal.walletAddress.slice(0, 10);
   const edgePct = (signal.edge * 100).toFixed(2);
+  const marketUrl = signal.marketSlug
+    ? `https://polymarket.com/event/${signal.marketSlug}`
+    : null;
   const lines = [
     `${statusEmoji} <b>Copy Trade Signal</b> [${result.status.toUpperCase()}]`,
-    `Wallet: <code>${wallet}</code>`,
+    `Copied from: <code>${wallet}</code>`,
+    signal.marketQuestion
+      ? `Market: <b>${signal.marketQuestion}</b>`
+      : null,
+    marketUrl ? `Link: ${marketUrl}` : null,
     `Outcome: <b>${signal.outcome}</b>`,
     `Whale entry: ${signal.whaleAvgPrice.toFixed(3)} | Ask: ${signal.currentAsk.toFixed(3)}`,
     `Edge: <b>+${edgePct}%</b> | Kelly: <b>$${signal.kellySize.toFixed(2)}</b>`,
+    result.orderId ? `Order ID: <code>${result.orderId}</code>` : null,
   ];
-  if (result.orderId) lines.push(`Order ID: <code>${result.orderId}</code>`);
-  return lines.join('\n');
+  return lines.filter(Boolean).join('\n');
 }
 
 export async function sendSignalAlert(

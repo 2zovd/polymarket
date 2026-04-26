@@ -146,8 +146,10 @@ export interface AppConfig {
   telegramChatId: string | null;
   duneApiKey: string | null;
   maxOpenPositions: number;
-  /** Skip markets with less than this many hours until expiry (filters 5-min micro-markets) */
+  /** Skip markets with less than this many hours until expiry. Set to 0 to allow micro-markets. */
   minMarketHoursRemaining: number;
+  /** Hard floor: never enter with less than this many minutes remaining, regardless of hours setting. */
+  minMarketMinutesBuffer: number;
   /** Interval for trade stream polling in seconds (default: 60) */
   streamIntervalSeconds: number;
 }

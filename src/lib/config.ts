@@ -57,8 +57,10 @@ const EnvSchema = z.object({
   TELEGRAM_CHAT_ID: z.string().optional(),
   DUNE_API_KEY: z.string().optional(),
   MAX_OPEN_POSITIONS: z.coerce.number().int().positive().default(20),
-  // Skip markets closing within this many hours — filters 5-min micro-markets
+  // Skip markets closing within this many hours. Set to 0 to allow micro-markets (5-min, 1-hour).
   MIN_MARKET_HOURS_REMAINING: z.coerce.number().nonnegative().default(4),
+  // Hard floor applied regardless of hours setting — prevents entries in the final seconds.
+  MIN_MARKET_MINUTES_BUFFER: z.coerce.number().nonnegative().default(1),
   STREAM_INTERVAL_SECONDS: z.coerce.number().int().positive().default(60),
 });
 
@@ -112,6 +114,7 @@ function loadConfig(): AppConfig {
     duneApiKey: env.DUNE_API_KEY ?? null,
     maxOpenPositions: env.MAX_OPEN_POSITIONS,
     minMarketHoursRemaining: env.MIN_MARKET_HOURS_REMAINING,
+    minMarketMinutesBuffer: env.MIN_MARKET_MINUTES_BUFFER,
     streamIntervalSeconds: env.STREAM_INTERVAL_SECONDS,
   };
 }

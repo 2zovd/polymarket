@@ -26,6 +26,8 @@ export interface Signal {
   kellySize: number;
   status: 'ready' | 'skipped';
   skipReason?: string;
+  marketQuestion: string;
+  marketSlug: string;
 }
 
 export async function generateSignal(
@@ -42,6 +44,8 @@ export async function generateSignal(
     tokenId: position.tokenId,
     outcome: position.outcome,
     whaleAvgPrice: position.avgPrice,
+    marketQuestion: '',
+    marketSlug: '',
   };
 
   function skip(reason: string): Signal {
@@ -69,7 +73,12 @@ export async function generateSignal(
 
   // Market must be active in our DB and have sufficient time remaining
   const market = await db
-    .select({ active: markets.active, endDateIso: markets.endDateIso })
+    .select({
+      active: markets.active,
+      endDateIso: markets.endDateIso,
+      question: markets.question,
+      slug: markets.slug,
+    })
     .from(markets)
     .where(eq(markets.conditionId, position.conditionId))
     .get();
@@ -78,15 +87,26 @@ export async function generateSignal(
     return skip('market_not_active');
   }
 
+  base.marketQuestion = market.question;
+  base.marketSlug = market.slug;
+
   if (market.endDateIso) {
-    // Date-only strings (YYYY-MM-DD) parse as midnight UTC — treat as end-of-day to avoid
-    // false "expired" detection for markets that run through the calendar day.
+    // Date-only strings (YYYY-MM-DD) are normalised to end-of-day UTC.
+    // Full datetimes (from endDate on Gamma) are used as-is — critical for 5-min micro-markets.
     const dateStr = market.endDateIso.includes('T')
       ? market.endDateIso
       : `${market.endDateIso}T23:59:59Z`;
     const msRemaining = new Date(dateStr).getTime() - Date.now();
-    if (msRemaining < config.minMarketHoursRemaining * 60 * 60 * 1000) {
+
+    // Coarse filter: skip markets with fewer hours than the configured threshold.
+    // Set MIN_MARKET_HOURS_REMAINING=0 to allow micro-markets (5-min, 1-hour).
+    if (config.minMarketHoursRemaining > 0 && msRemaining < config.minMarketHoursRemaining * 60 * 60 * 1000) {
       return skip(`market_expiring_soon: ${(msRemaining / 3_600_000).toFixed(1)}h left`);
+    }
+
+    // Hard floor: never enter with less than minMarketMinutesBuffer minutes remaining.
+    if (msRemaining < config.minMarketMinutesBuffer * 60 * 1000) {
+      return skip(`market_closing_imminently: ${(msRemaining / 60_000).toFixed(1)}min left`);
     }
   }
 

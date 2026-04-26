@@ -23,7 +23,14 @@ async function upsertMarketPage(
   const rows = page.map((market) => {
     const questionId = market.questionID ?? market.questionId ?? '';
     const status = deriveStatus(market.active, market.closed);
-    const endDateIso = market.endDateIso ?? market.endDate?.split('T')[0] ?? '';
+    // Prefer the full ISO datetime from endDate so that short-lived markets (5-min, 1-hour)
+    // get their precise close time stored. Fall back to the date-only endDateIso when no time
+    // component is present, which the expiry check in signal.ts normalises to T23:59:59Z.
+    const endDateIso =
+      (market.endDate?.includes('T') ? market.endDate : null) ??
+      market.endDateIso ??
+      (market.endDate ? market.endDate.split('T')[0] : '') ??
+      '';
     return {
       conditionId: market.conditionId,
       questionId,
