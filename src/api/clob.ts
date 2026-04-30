@@ -157,16 +157,32 @@ export function createClobClient(config: AppConfig, log: Logger) {
         );
       }
 
-      const result = await authedClient.createAndPostOrder({
+      const result = (await authedClient.createAndPostOrder({
         tokenID: params.tokenId,
         side: params.side === 'BUY' ? ClobSide.BUY : ClobSide.SELL,
         price: params.price,
         size: params.size,
-      });
+      })) as {
+        success?: boolean;
+        errorMsg?: string;
+        orderID?: string;
+        status?: 'live' | 'matched' | 'delayed';
+      };
 
-      const orderId = (result as { orderID?: string }).orderID ?? 'unknown';
-      childLog.info({ orderId }, 'Order placed');
-      return { orderId, dryRun: false };
+      // CLOB returns success=false with errorMsg when the order is rejected
+      // (tick size, min size, trading disabled, signer mismatch, etc).
+      // Treat as a hard failure — never record a phantom executed signal.
+      if (result.success === false) {
+        throw new Error(`CLOB rejected order: ${result.errorMsg || 'unknown reason'}`);
+      }
+      if (!result.orderID || result.orderID === 'unknown') {
+        throw new Error(
+          `CLOB returned invalid orderID: "${result.orderID ?? 'undefined'}" (success=${result.success}, errorMsg=${result.errorMsg ?? ''})`,
+        );
+      }
+
+      childLog.info({ orderId: result.orderID, status: result.status }, 'Order placed');
+      return { orderId: result.orderID, dryRun: false };
     },
 
     async cancelOrder(orderId: string): Promise<void> {

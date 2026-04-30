@@ -44,7 +44,11 @@ const EnvSchema = z.object({
   MIN_WHALE_ROI: z.coerce.number().default(0.02),
   MIN_WHALE_TRADES: z.coerce.number().int().positive().default(30),
   MIN_WHALE_PVALUE: z.coerce.number().positive().max(1).default(0.05),
-  MIN_EDGE_PCT: z.coerce.number().default(0.01),
+  // Maximum allowed price slippage vs whale entry (negative = allow price to have risen since entry).
+  // e.g. -0.15 means copy even if market moved 15 cents against us since whale entered.
+  MIN_EDGE_PCT: z.coerce.number().default(-0.15),
+  // Hard cap: never enter if current ask exceeds this. Prevents copying already-priced-in moves.
+  MAX_COPY_ASK: z.coerce.number().positive().max(1).default(0.85),
   MIN_POSITION_USDC: z.coerce.number().positive().default(10),
   LOG_LEVEL: z.enum(['trace', 'debug', 'info', 'warn', 'error', 'fatal']).default('info'),
   LOG_PRETTY: z
@@ -62,6 +66,13 @@ const EnvSchema = z.object({
   // Hard floor applied regardless of hours setting — prevents entries in the final seconds.
   MIN_MARKET_MINUTES_BUFFER: z.coerce.number().nonnegative().default(1),
   STREAM_INTERVAL_SECONDS: z.coerce.number().int().positive().default(60),
+  // Skip positions first seen more than N hours ago (already priced in). Set to 0 to disable.
+  MAX_POSITION_AGE_HOURS: z.coerce.number().nonnegative().default(8),
+  // Minimum average USDC per resolved BUY trade for a whale wallet. 0 = disabled.
+  MIN_AVG_POSITION_USDC: z.coerce.number().nonnegative().default(0),
+  // Minimum ratio currentAsk/whaleAvgPrice. Skip if market repriced heavily against the whale.
+  // e.g. 0.5 = skip if current ask < 50% of whale's entry. 0 = disabled.
+  MIN_WHALE_ASK_RATIO: z.coerce.number().nonnegative().max(1).default(0.5),
 });
 
 function loadConfig(): AppConfig {
@@ -105,6 +116,7 @@ function loadConfig(): AppConfig {
     minWhaleTrades: env.MIN_WHALE_TRADES,
     minWhalePvalue: env.MIN_WHALE_PVALUE,
     minEdgePct: env.MIN_EDGE_PCT,
+    maxCopyAsk: env.MAX_COPY_ASK,
     minPositionUsdc: env.MIN_POSITION_USDC,
     logLevel: env.LOG_LEVEL,
     logPretty: env.LOG_PRETTY,
@@ -116,6 +128,9 @@ function loadConfig(): AppConfig {
     minMarketHoursRemaining: env.MIN_MARKET_HOURS_REMAINING,
     minMarketMinutesBuffer: env.MIN_MARKET_MINUTES_BUFFER,
     streamIntervalSeconds: env.STREAM_INTERVAL_SECONDS,
+    maxPositionAgeHours: env.MAX_POSITION_AGE_HOURS,
+    minAvgPositionUsdc: env.MIN_AVG_POSITION_USDC,
+    minWhaleAskRatio: env.MIN_WHALE_ASK_RATIO,
   };
 }
 

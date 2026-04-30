@@ -42,6 +42,7 @@ async function upsertWalletScore(
         pValue: result.pValue,
         isSharp: result.isSharp,
         isProfitable: result.isProfitable,
+        avgPositionSizeUsdc: result.avgPositionSizeUsdc,
         updatedAt: now,
       })
       .onConflictDoUpdate({
@@ -55,6 +56,7 @@ async function upsertWalletScore(
           pValue: walletStats.pValue,
           isSharp: walletStats.isSharp,
           isProfitable: walletStats.isProfitable,
+          avgPositionSizeUsdc: walletStats.avgPositionSizeUsdc,
           updatedAt: walletStats.updatedAt,
         },
       });

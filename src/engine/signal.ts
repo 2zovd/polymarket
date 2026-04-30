@@ -27,7 +27,8 @@ export interface Signal {
   status: 'ready' | 'skipped';
   skipReason?: string;
   marketQuestion: string;
-  marketSlug: string;
+  /** Parent event slug — used to build polymarket.com/event/<slug> URLs. */
+  eventSlug: string;
 }
 
 export async function generateSignal(
@@ -45,7 +46,7 @@ export async function generateSignal(
     outcome: position.outcome,
     whaleAvgPrice: position.avgPrice,
     marketQuestion: '',
-    marketSlug: '',
+    eventSlug: '',
   };
 
   function skip(reason: string): Signal {
@@ -75,9 +76,11 @@ export async function generateSignal(
   const market = await db
     .select({
       active: markets.active,
+      acceptingOrders: markets.acceptingOrders,
       endDateIso: markets.endDateIso,
       question: markets.question,
       slug: markets.slug,
+      eventSlug: markets.eventSlug,
     })
     .from(markets)
     .where(eq(markets.conditionId, position.conditionId))
@@ -87,8 +90,15 @@ export async function generateSignal(
     return skip('market_not_active');
   }
 
+  // Active != accepting_orders. The CLOB rejects new orders during the close-out window
+  // even while the market is still flagged active. Skipping here avoids surfacing the
+  // failure deep in the executor.
+  if (!market.acceptingOrders) {
+    return skip('market_not_accepting_orders');
+  }
+
   base.marketQuestion = market.question;
-  base.marketSlug = market.slug;
+  base.eventSlug = market.eventSlug ?? market.slug;
 
   if (market.endDateIso) {
     // Date-only strings (YYYY-MM-DD) are normalised to end-of-day UTC.
@@ -100,7 +110,10 @@ export async function generateSignal(
 
     // Coarse filter: skip markets with fewer hours than the configured threshold.
     // Set MIN_MARKET_HOURS_REMAINING=0 to allow micro-markets (5-min, 1-hour).
-    if (config.minMarketHoursRemaining > 0 && msRemaining < config.minMarketHoursRemaining * 60 * 60 * 1000) {
+    if (
+      config.minMarketHoursRemaining > 0 &&
+      msRemaining < config.minMarketHoursRemaining * 60 * 60 * 1000
+    ) {
       return skip(`market_expiring_soon: ${(msRemaining / 3_600_000).toFixed(1)}h left`);
     }
 
@@ -121,9 +134,40 @@ export async function generateSignal(
     return skip('orderbook_fetch_failed');
   }
 
+  // Hard cap: don't copy if the market has already mostly priced in the whale's thesis.
+  // e.g. MAX_COPY_ASK=0.85 means skip if current ask > 0.85 (limited upside left).
+  if (currentAsk > config.maxCopyAsk) {
+    return {
+      ...base,
+      currentAsk,
+      edge: position.avgPrice - currentAsk,
+      kellySize: 0,
+      status: 'skipped',
+      skipReason: `ask_too_high: ${currentAsk.toFixed(3)} > ${config.maxCopyAsk}`,
+    };
+  }
+
+  // Market-repricing guard: skip if the market has collapsed vs the whale's entry.
+  // A high positive edge caused by a price DROP (not early entry) is a red flag, not an opportunity.
+  // e.g. whale entered at 0.23, current ask is 0.05 → ratio 0.22 → market moved 78% against them.
+  if (config.minWhaleAskRatio > 0 && position.avgPrice > 0) {
+    const askRatio = currentAsk / position.avgPrice;
+    if (askRatio < config.minWhaleAskRatio) {
+      return {
+        ...base,
+        currentAsk,
+        edge: position.avgPrice - currentAsk,
+        kellySize: 0,
+        status: 'skipped',
+        skipReason: `market_repriced_against_whale: ask/entry=${askRatio.toFixed(3)} < ${config.minWhaleAskRatio}`,
+      };
+    }
+  }
+
+  // Slippage gate: how much did the market move against us since whale's entry.
+  // Negative minEdgePct allows some slippage (e.g. -0.15 = up to 15 cents above whale entry).
   const edge = position.avgPrice - currentAsk;
   if (edge < config.minEdgePct) {
-    // Preserve actual currentAsk and edge for diagnostics (skip() zeroes them)
     return {
       ...base,
       currentAsk,

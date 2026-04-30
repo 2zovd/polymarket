@@ -7,6 +7,12 @@ export type MarketStatus = 'active' | 'closed' | 'resolved' | 'cancelled';
 
 // Gamma API market shape — matches actual response from /markets endpoint.
 // Field names are as returned by the API (some quirks: questionID vs questionId).
+export interface MarketEvent {
+  id: string;
+  slug: string;
+  title?: string;
+}
+
 export interface Market {
   conditionId: string;
   // Gamma returns questionID (capital ID); questionId alias kept for compatibility
@@ -15,6 +21,8 @@ export interface Market {
   question: string;
   description?: string;
   slug: string;
+  // Parent event(s). polymarket.com/event/<slug> URLs use events[0].slug, NOT market.slug.
+  events?: MarketEvent[];
   // Gamma does not return a status string — derive from active/closed flags
   status?: MarketStatus;
   // Gamma returns either endDateIso ("2026-07-31") or endDate (ISO datetime) or both
@@ -31,6 +39,8 @@ export interface Market {
   liquidityNum: number;
   active: boolean;
   closed: boolean;
+  // Distinct from `active`: the CLOB may stop accepting new orders during close-out window.
+  acceptingOrders?: boolean;
 }
 
 export interface Token {
@@ -138,6 +148,7 @@ export interface AppConfig {
   minWhaleTrades: number;
   minWhalePvalue: number;
   minEdgePct: number;
+  maxCopyAsk: number;
   minPositionUsdc: number;
   logLevel: string;
   logPretty: boolean;
@@ -152,4 +163,14 @@ export interface AppConfig {
   minMarketMinutesBuffer: number;
   /** Interval for trade stream polling in seconds (default: 60) */
   streamIntervalSeconds: number;
+  /** Skip positions first seen more than this many hours ago. Filters stale entries already priced in. */
+  maxPositionAgeHours: number;
+  /** Minimum average USDC per resolved BUY trade for a whale wallet. 0 = disabled. */
+  minAvgPositionUsdc: number;
+  /**
+   * Minimum ratio of currentAsk / whaleAvgPrice. Prevents copying a whale whose
+   * position has already repriced heavily against them.
+   * e.g. 0.5 = skip if market fell more than 50% from whale's entry. 0 = disabled.
+   */
+  minWhaleAskRatio: number;
 }

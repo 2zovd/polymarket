@@ -1,3 +1,4 @@
+import { sql } from 'drizzle-orm';
 import type { Logger } from 'pino';
 import type { GammaClient } from '../api/gamma.js';
 import type { DbClient } from '../db/index.js';
@@ -31,12 +32,20 @@ async function upsertMarketPage(
       market.endDateIso ??
       (market.endDate ? market.endDate.split('T')[0] : '') ??
       '';
+    // events[0].slug is the URL-shaped parent event slug. Fall back to market.slug only
+    // for legacy markets that predate the event grouping (rare but exists in the DB).
+    const eventSlug = market.events?.[0]?.slug ?? market.slug;
+    // Default true: a missing field means the API didn't surface the flag. Only treat as
+    // false when the API explicitly says so — otherwise we'd block trades on every market
+    // where the field was omitted.
+    const acceptingOrders = market.acceptingOrders ?? true;
     return {
       conditionId: market.conditionId,
       questionId,
       question: market.question,
       description: market.description ?? '',
       slug: market.slug,
+      eventSlug,
       status,
       endDateIso,
       volumeNum: market.volumeNum,
@@ -45,6 +54,7 @@ async function upsertMarketPage(
       takerBaseFee: 0,
       active: market.active,
       closed: market.closed,
+      acceptingOrders,
       resolvedAt: status === 'resolved' ? now : null,
       outcomePrices: market.outcomePrices ?? null,
       outcomes: market.outcomes ?? null,
@@ -61,6 +71,11 @@ async function upsertMarketPage(
         target: markets.conditionId,
         set: {
           question: markets.question,
+          // event_slug and accepting_orders require sql`excluded.*` because Drizzle's
+          // SQLite insert builder does not translate column references to excluded.* in
+          // onConflictDoUpdate.set — it keeps them as self-references instead.
+          eventSlug: sql`excluded.event_slug`,
+          acceptingOrders: sql`excluded.accepting_orders`,
           status: markets.status,
           endDateIso: markets.endDateIso,
           volumeNum: markets.volumeNum,

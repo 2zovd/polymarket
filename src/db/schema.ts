@@ -8,6 +8,9 @@ export const markets = sqliteTable('markets', {
   question: text('question').notNull(),
   description: text('description').notNull().default(''),
   slug: text('slug').notNull(),
+  // Parent event slug — this is what polymarket.com/event/<slug> URLs use.
+  // Nullable until backfilled; new collector runs populate it from market.events[0].slug.
+  eventSlug: text('event_slug'),
   status: text('status').notNull(), // 'active' | 'closed' | 'resolved' | 'cancelled'
   endDateIso: text('end_date_iso').notNull(),
   volumeNum: real('volume_num').notNull().default(0),
@@ -16,6 +19,9 @@ export const markets = sqliteTable('markets', {
   takerBaseFee: real('taker_base_fee').notNull().default(0),
   active: integer('active', { mode: 'boolean' }).notNull().default(false),
   closed: integer('closed', { mode: 'boolean' }).notNull().default(false),
+  // Distinct from `active`: a market can be active but in close-out window where the CLOB
+  // refuses new orders. Skip such markets at signal time.
+  acceptingOrders: integer('accepting_orders', { mode: 'boolean' }).notNull().default(true),
   resolvedAt: text('resolved_at'), // ISO string, null until resolved
   // JSON string arrays from Gamma API, e.g. '["1","0"]' (outcome 0 won) or '["0","1"]'
   outcomePrices: text('outcome_prices'),
@@ -71,6 +77,7 @@ export const walletStats = sqliteTable('wallet_stats', {
   isSharp: integer('is_sharp', { mode: 'boolean' }).notNull().default(false),
   // true when p < 0.05 AND roi > 0 AND resolvedTrades >= 30 (ignores Brier — copy trading signal)
   isProfitable: integer('is_profitable', { mode: 'boolean' }).notNull().default(false),
+  avgPositionSizeUsdc: real('avg_position_size_usdc'),
   updatedAt: text('updated_at').notNull(),
 });
 
@@ -86,6 +93,7 @@ export const watchedPositions = sqliteTable(
     size: real('size').notNull().default(0),
     avgPrice: real('avg_price').notNull().default(0),
     updatedAt: text('updated_at').notNull(),
+    firstSeenAt: text('first_seen_at'),
   },
   (t) => [primaryKey({ columns: [t.walletAddress, t.tokenId] })],
 );

@@ -1,4 +1,4 @@
-import { and, eq, gt, gte } from 'drizzle-orm';
+import { and, eq, gt, gte, isNull, or } from 'drizzle-orm';
 import type { Logger } from 'pino';
 import type { ClobClientWrapper } from '../api/clob.js';
 import type { DataApiClient, DataApiPosition } from '../api/data.js';
@@ -14,31 +14,47 @@ const WINNER_THRESHOLD = 0.95;
 // Initialised to 2 minutes ago so the first cycle catches any trades missed at startup.
 let streamCursor: number = Math.floor(Date.now() / 1000) - 120;
 
+// Cross-cycle duplicate guard: tokenIds reserved or already placed in this process session.
+// Shared between stream and monitor cycles to prevent race-condition double-entries when
+// both cycles overlap and read openTokenIds from DB before the first order is committed.
+const sessionTokenGuard = new Set<string>();
+
 async function loadWhaleWallets(db: DbClient, config: AppConfig) {
-  return db
-    .select()
-    .from(walletStats)
-    .where(
-      and(
-        eq(walletStats.isProfitable, true),
-        gt(walletStats.resolvedTrades, config.minWhaleTrades),
-        gte(walletStats.roi, config.minWhaleRoi),
-      ),
-    )
-    .all();
+  const baseConditions = and(
+    eq(walletStats.isProfitable, true),
+    gt(walletStats.resolvedTrades, config.minWhaleTrades),
+    gte(walletStats.roi, config.minWhaleRoi),
+  );
+
+  const conditions =
+    config.minAvgPositionUsdc > 0
+      ? and(
+          baseConditions,
+          or(
+            isNull(walletStats.avgPositionSizeUsdc),
+            gte(walletStats.avgPositionSizeUsdc, config.minAvgPositionUsdc),
+          ),
+        )
+      : baseConditions;
+
+  return db.select().from(walletStats).where(conditions).all();
 }
 
 async function getPreviousSnapshot(
   db: DbClient,
   walletAddress: string,
-): Promise<Map<string, number>> {
+): Promise<Map<string, { size: number; firstSeenAt: string | null }>> {
   const rows = await db
-    .select({ tokenId: watchedPositions.tokenId, size: watchedPositions.size })
+    .select({
+      tokenId: watchedPositions.tokenId,
+      size: watchedPositions.size,
+      firstSeenAt: watchedPositions.firstSeenAt,
+    })
     .from(watchedPositions)
     .where(eq(watchedPositions.walletAddress, walletAddress))
     .all();
 
-  return new Map(rows.map((r) => [r.tokenId, r.size]));
+  return new Map(rows.map((r) => [r.tokenId, { size: r.size, firstSeenAt: r.firstSeenAt }]));
 }
 
 async function updateSnapshot(
@@ -58,6 +74,7 @@ async function updateSnapshot(
       size: p.size,
       avgPrice: p.avgPrice,
       updatedAt: now,
+      firstSeenAt: now,
     }));
     await db
       .insert(watchedPositions)
@@ -68,6 +85,7 @@ async function updateSnapshot(
           size: watchedPositions.size,
           avgPrice: watchedPositions.avgPrice,
           updatedAt: watchedPositions.updatedAt,
+          // firstSeenAt intentionally excluded — preserve first detection timestamp
         },
       });
   }
@@ -178,22 +196,54 @@ async function scanWhale(
   const prevSnapshot = await getPreviousSnapshot(db, whale.walletAddress);
 
   const newPositions = positions.filter((pos) => {
-    const prevSize = prevSnapshot.get(pos.tokenId);
-    if (prevSize === undefined) return true;
-    return pos.size > prevSize * 1.2 && pos.size - prevSize > 1;
+    const prev = prevSnapshot.get(pos.tokenId);
+    if (prev === undefined) return true;
+    return pos.size > prev.size * 1.2 && pos.size - prev.size > 1;
   });
 
-  if (newPositions.length > 0) {
+  // Age filter: skip positions first seen longer than maxPositionAgeHours ago.
+  // Brand-new positions (not in snapshot) always pass — firstSeenAt not set yet.
+  const maxAgeMs = config.maxPositionAgeHours * 3_600_000;
+  const staleCount = newPositions.filter((pos) => {
+    const prev = prevSnapshot.get(pos.tokenId);
+    if (!prev?.firstSeenAt) return false;
+    return Date.now() - new Date(prev.firstSeenAt).getTime() > maxAgeMs;
+  }).length;
+  const freshPositions = newPositions.filter((pos) => {
+    const prev = prevSnapshot.get(pos.tokenId);
+    if (!prev?.firstSeenAt) return true;
+    return Date.now() - new Date(prev.firstSeenAt).getTime() <= maxAgeMs;
+  });
+
+  if (staleCount > 0) {
     log.info(
-      { wallet: whale.walletAddress.slice(0, 10), newPositions: newPositions.length },
+      {
+        wallet: whale.walletAddress.slice(0, 10),
+        staleCount,
+        maxAgeHours: config.maxPositionAgeHours,
+      },
+      'Stale positions skipped (age filter)',
+    );
+  }
+
+  if (freshPositions.length > 0) {
+    log.info(
+      { wallet: whale.walletAddress.slice(0, 10), freshPositions: freshPositions.length },
       'New positions detected',
     );
 
-    for (const pos of newPositions) {
+    for (const pos of freshPositions) {
       if (openTokenIds.size >= config.maxOpenPositions) {
         log.info({ max: config.maxOpenPositions }, 'Position cap reached mid-cycle');
         break;
       }
+
+      // Cross-cycle guard: reserve synchronously BEFORE any await to close the TOCTOU window.
+      // Both stream and monitor cycles share this module-level set, so whichever cycle
+      // reaches this token first wins — the other will see it on its next guard check.
+      if (sessionTokenGuard.has(pos.tokenId)) continue;
+      sessionTokenGuard.add(pos.tokenId);
+      openTokenIds.add(pos.tokenId);
 
       const signal = await generateSignal(
         pos,
@@ -204,10 +254,18 @@ async function scanWhale(
         openTokenIds,
       );
 
+      if (signal.status !== 'ready') {
+        // Signal filtered out — release so future cycles can re-evaluate this position.
+        sessionTokenGuard.delete(pos.tokenId);
+        openTokenIds.delete(pos.tokenId);
+      }
+
       const execResult = await executeSignal(signal, clob, db, log, config);
 
-      if (execResult.status === 'executed' || execResult.status === 'dry-run') {
-        openTokenIds.add(pos.tokenId);
+      if (signal.status === 'ready' && execResult.status !== 'executed' && execResult.status !== 'dry-run') {
+        // Order failed — release so future cycles can retry.
+        sessionTokenGuard.delete(pos.tokenId);
+        openTokenIds.delete(pos.tokenId);
       }
     }
   }
@@ -342,6 +400,14 @@ export async function startMonitor(
     },
     'Copy trading monitor started',
   );
+
+  // Seed cross-cycle guard from existing open positions so restarts don't re-enter.
+  const existingOpen = await db
+    .select({ tokenId: openPositions.tokenId })
+    .from(openPositions)
+    .where(eq(openPositions.status, 'open'))
+    .all();
+  for (const row of existingOpen) sessionTokenGuard.add(row.tokenId);
 
   // Run both cycles immediately at startup.
   await runStreamCycle(dataApi, clob, db, log, config);

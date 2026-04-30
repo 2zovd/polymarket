@@ -55,7 +55,11 @@ export function startCron(
   runSafe('positions:init', () => collectPositions(gamma, db, log));
 
   // Bootstrap resolved markets + wallet scoring if no profitable wallets exist yet (fresh DB).
-  const profitableCount = db.select().from(walletStats).all().filter((w) => w.isProfitable).length;
+  const profitableCount = db
+    .select()
+    .from(walletStats)
+    .all()
+    .filter((w) => w.isProfitable).length;
   if (profitableCount === 0) {
     childLog.info('No profitable wallets — running initial resolved-markets + wallet scoring');
     runSafe('resolved-markets:init', () =>

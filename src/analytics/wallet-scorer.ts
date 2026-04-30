@@ -17,6 +17,7 @@ export interface WalletScore {
   pValue: number | null;
   isSharp: boolean;
   isProfitable: boolean;
+  avgPositionSizeUsdc: number | null;
 }
 
 export interface ResolvedMarketMap {
@@ -56,6 +57,7 @@ export function scoreWallet(
       pValue: null,
       isSharp: false,
       isProfitable: false,
+      avgPositionSizeUsdc: null,
     };
   }
 
@@ -92,6 +94,7 @@ export function scoreWallet(
       pValue: null,
       isSharp: false,
       isProfitable: false,
+      avgPositionSizeUsdc: null,
     };
   }
 
@@ -112,7 +115,19 @@ export function scoreWallet(
 
   const isProfitable = pValue < SHARP_P_VALUE && roi > 0 && resolvedTrades >= MIN_RESOLVED;
 
-  return { totalTrades, resolvedTrades, winRate, roi, brierScore, pValue, isSharp, isProfitable };
+  const avgPositionSizeUsdc = totalCapital > 0 ? totalCapital / resolvedTrades : null;
+
+  return {
+    totalTrades,
+    resolvedTrades,
+    winRate,
+    roi,
+    brierScore,
+    pValue,
+    isSharp,
+    isProfitable,
+    avgPositionSizeUsdc,
+  };
 }
 
 /**

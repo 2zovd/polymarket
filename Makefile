@@ -1,5 +1,8 @@
 .PHONY: start stop restart status logs
 
+SHELL    := /bin/zsh
+FNM_PATH := /opt/homebrew/bin/fnm
+PNPM     := $(shell eval "$$(/opt/homebrew/bin/fnm env --shell bash 2>/dev/null)" && which pnpm 2>/dev/null)
 LOG_FILE := logs/bot.log
 BOT_CMD  := src/index.ts copy start
 
@@ -9,7 +12,7 @@ start:
 		exit 1; \
 	fi
 	@mkdir -p logs
-	@caffeinate -i pnpm dev copy start >> $(LOG_FILE) 2>&1 &
+	@caffeinate -i $(PNPM) dev copy start >> $(LOG_FILE) 2>&1 &
 	@sleep 3
 	@if pgrep -qf "$(BOT_CMD)"; then \
 		echo "✅ Bot started (PID $$(pgrep -f '$(BOT_CMD)' | head -1))"; \
