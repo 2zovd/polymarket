@@ -28,7 +28,7 @@ export function startCron(
 
   schedule('*/30 * * * *', () => runSafe('markets', () => collectMarkets(gamma, db, log)));
   schedule('*/15 * * * *', () => runSafe('trades', () => collectTrades(dataApi, db, log)));
-  schedule('0 * * * *', () => runSafe('positions', () => collectPositions(gamma, db, log)));
+  schedule('0 * * * *', () => runSafe('positions', () => collectPositions(dataApi, db, log)));
   // Resolved market outcomes + wallet scoring every 6 hours
   schedule('0 */6 * * *', () =>
     runSafe('resolved-markets', () => collectResolvedMarkets(gamma, db, log)),
@@ -52,7 +52,7 @@ export function startCron(
 
   runSafe('markets:init', () => collectMarkets(gamma, db, log));
   runSafe('trades:init', () => collectTrades(dataApi, db, log));
-  runSafe('positions:init', () => collectPositions(gamma, db, log));
+  runSafe('positions:init', () => collectPositions(dataApi, db, log));
 
   // Bootstrap resolved markets + wallet scoring if no profitable wallets exist yet (fresh DB).
   const profitableCount = db

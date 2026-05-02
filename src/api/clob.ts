@@ -1,12 +1,19 @@
-import { type ApiKeyCreds, Chain, ClobClient, SignatureType } from '@polymarket/clob-client';
-import { Side as ClobSide } from '@polymarket/clob-client';
+import {
+  type ApiKeyCreds,
+  ApiError,
+  Chain,
+  ClobClient,
+  OrderType,
+  Side,
+  SignatureTypeV2,
+} from '@polymarket/clob-client-v2';
 import type { Logger } from 'pino';
 import { http, createWalletClient } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
 import { polygon, polygonAmoy } from 'viem/chains';
 import type { AppConfig } from '../types.js';
 
-// Wrapper around @polymarket/clob-client.
+// Wrapper around @polymarket/clob-client-v2.
 //
 // Auth flow:
 // 1. L1 auth: wallet signs → derives L2 API keys (run once via `orders derive-keys`)
@@ -36,20 +43,31 @@ export function createClobClient(config: AppConfig, log: Logger) {
       }
     : undefined;
 
-  // Read-only client — no credentials needed.
-  const readonlyClient = new ClobClient(config.clobApiUrl, clobChain);
+  // V2: proxy wallet via SignatureTypeV2.POLY_PROXY + funderAddress
+  const sigType = config.polymarketProxyAddress
+    ? SignatureTypeV2.POLY_PROXY
+    : SignatureTypeV2.EOA;
 
-  // Authed client. When a proxy wallet is configured (Magic.link / email accounts),
-  // SignatureType.POLY_PROXY is required so the CLOB checks the proxy's balance.
-  const sigType = config.polymarketProxyAddress ? SignatureType.POLY_PROXY : SignatureType.EOA;
-  const authedClient = new ClobClient(
-    config.clobApiUrl,
-    clobChain,
-    walletClient,
-    apiCreds,
-    sigType,
-    config.polymarketProxyAddress ?? undefined,
-  );
+  // Read-only client — no credentials needed for orderbook / market data.
+  const readonlyClient = new ClobClient({
+    host: config.clobApiUrl,
+    chain: clobChain,
+    signer: walletClient,
+    throwOnError: true,
+  });
+
+  // Authed client. throwOnError: true so API errors throw ApiError instead of
+  // returning { success: false } — makes error handling explicit.
+  // exactOptionalPropertyTypes: creds/funderAddress only included when defined.
+  const authedClient = new ClobClient({
+    host: config.clobApiUrl,
+    chain: clobChain,
+    signer: walletClient,
+    ...(apiCreds ? { creds: apiCreds } : {}),
+    signatureType: sigType,
+    ...(config.polymarketProxyAddress ? { funderAddress: config.polymarketProxyAddress } : {}),
+    throwOnError: true,
+  });
 
   const childLog = log.child({ module: 'clob' });
 
@@ -102,7 +120,8 @@ export function createClobClient(config: AppConfig, log: Logger) {
 
     async deriveApiKeys(): Promise<ApiKeyCreds> {
       childLog.info('Deriving L2 API keys from wallet signature');
-      const derived = await authedClient.createOrDeriveApiKey();
+      // V2: createOrDeriveApiKey() removed — use deriveApiKey() directly
+      const derived = await authedClient.deriveApiKey();
       childLog.info(
         { key: derived.key },
         'L2 API keys derived — save these to ~/.polymarket-secrets',
@@ -115,8 +134,10 @@ export function createClobClient(config: AppConfig, log: Logger) {
     async getOpenOrders() {
       requireCreds();
       childLog.debug('Fetching open orders');
-      const orders = await authedClient.getOpenOrders();
-      childLog.info({ count: orders.length }, 'Open orders fetched');
+      const response = await authedClient.getOpenOrders();
+      // V2 returns OpenOrdersResponse object; extract array from .data if present
+      const orders = Array.isArray(response) ? response : ((response as { data?: unknown[] }).data ?? response);
+      childLog.info({ count: Array.isArray(orders) ? orders.length : '?' }, 'Open orders fetched');
       return orders;
     },
 
@@ -136,8 +157,12 @@ export function createClobClient(config: AppConfig, log: Logger) {
     /**
      * Place a GTC limit order.
      * DRY_RUN and MAX_ORDER_SIZE_USDC are checked independently — both guards active.
+     *
+     * V2 requires tick size at order creation time (passed to createAndPostOrder).
+     * Fetched live from CLOB via getTickSize(tokenId) — lightweight GET, no auth needed.
      */
     async placeLimitOrder(params: {
+      conditionId: string;
       tokenId: string;
       side: 'BUY' | 'SELL';
       price: number;
@@ -157,32 +182,33 @@ export function createClobClient(config: AppConfig, log: Logger) {
         );
       }
 
-      const result = (await authedClient.createAndPostOrder({
-        tokenID: params.tokenId,
-        side: params.side === 'BUY' ? ClobSide.BUY : ClobSide.SELL,
-        price: params.price,
-        size: params.size,
-      })) as {
-        success?: boolean;
-        errorMsg?: string;
-        orderID?: string;
-        status?: 'live' | 'matched' | 'delayed';
-      };
+      // getTickSize returns TickSize ("0.1" | "0.01" | "0.001" | "0.0001") — pass directly
+      const tickSize = await readonlyClient.getTickSize(params.tokenId);
 
-      // CLOB returns success=false with errorMsg when the order is rejected
-      // (tick size, min size, trading disabled, signer mismatch, etc).
-      // Treat as a hard failure — never record a phantom executed signal.
-      if (result.success === false) {
-        throw new Error(`CLOB rejected order: ${result.errorMsg || 'unknown reason'}`);
-      }
-      if (!result.orderID || result.orderID === 'unknown') {
-        throw new Error(
-          `CLOB returned invalid orderID: "${result.orderID ?? 'undefined'}" (success=${result.success}, errorMsg=${result.errorMsg ?? ''})`,
-        );
-      }
+      try {
+        const result = (await authedClient.createAndPostOrder(
+          {
+            tokenID: params.tokenId,
+            side: params.side === 'BUY' ? Side.BUY : Side.SELL,
+            price: params.price,
+            size: params.size,
+          },
+          { tickSize },
+          OrderType.GTC,
+        )) as { orderID?: string; status?: string };
 
-      childLog.info({ orderId: result.orderID, status: result.status }, 'Order placed');
-      return { orderId: result.orderID, dryRun: false };
+        if (!result.orderID) {
+          throw new Error(`CLOB returned no orderID (status=${result.status ?? 'unknown'})`);
+        }
+
+        childLog.info({ orderId: result.orderID, status: result.status }, 'Order placed');
+        return { orderId: result.orderID, dryRun: false };
+      } catch (err) {
+        if (err instanceof ApiError) {
+          throw new Error(`CLOB rejected order [${err.status}]: ${err.message}`);
+        }
+        throw err;
+      }
     },
 
     async cancelOrder(orderId: string): Promise<void> {

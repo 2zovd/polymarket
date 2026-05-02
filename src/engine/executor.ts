@@ -81,6 +81,7 @@ export async function executeSignal(
 
   try {
     const { orderId, dryRun } = await clob.placeLimitOrder({
+      conditionId: signal.conditionId,
       tokenId: signal.tokenId,
       side: 'BUY',
       price: signal.currentAsk,

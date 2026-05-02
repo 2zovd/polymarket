@@ -20,7 +20,7 @@ Autonomous whale-tracking and copy-trading bot for Polymarket — built in TypeS
 | DB | SQLite + Drizzle ORM (WAL mode) |
 | Validation | Zod |
 | Logging | pino (JSON in prod, pino-pretty in dev) |
-| Polymarket | @polymarket/clob-client |
+| Polymarket | @polymarket/clob-client-v2 (V2 API) |
 | Wallet / Signing | viem |
 | Testing | Vitest |
 | Linting | Biome |
@@ -83,26 +83,65 @@ pnpm dev orders derive-keys
 # Copy CLOB_API_KEY / CLOB_SECRET / CLOB_PASSPHRASE → ~/.polymarket-secrets
 ```
 
+**First-time pUSD allowance (required before live trading):**
+
+Polymarket V2 uses **pUSD** (Polymarket USD) as collateral instead of USDC.e. Before switching `DRY_RUN=false`, approve the new V2 exchange contract via the Polymarket UI: **Settings → Trading → Approve**. Without this, order placement will fail with an allowance error.
+
 ---
 
 ## Quick Start
 
 ```bash
-# 1. Start background data collectors
-pnpm dev cron
-
-# 2. Discover and score profitable whale wallets via Dune Analytics
-pnpm dev whales discover               # fetches top-500, scores each via Data API
+# 1. Discover and score profitable whale wallets
+pnpm dev whales discover               # fetches top-500 from Dune, scores each
 pnpm dev whales top --profitable       # review: should show 40-80 flagged wallets
 
-# 3. Test the copy trading engine (DRY_RUN=true — no real orders)
-pnpm dev copy start --once             # single cycle, inspect signals
-pnpm dev copy status                   # review detections and skip reasons
+# 2. Test one monitor cycle (DRY_RUN=true — no real orders)
+pnpm dev copy start --once             # single cycle, logs all signals to console
+pnpm dev copy status                   # inspect signals and skip reasons in DB
 
-# 4. Run as a persistent daemon
-pm2 start ecosystem.config.cjs
-pm2 save && pm2 startup                # auto-restart on reboot
+# 3. Run as persistent daemon (see PM2 section below for full command list)
+pnpm exec pm2 start ecosystem.config.cjs
+pnpm exec pm2 save && pnpm exec pm2 startup
 ```
+
+---
+
+## Make Commands
+
+Run `make` with no arguments to print the full command list.
+
+### Daemon
+
+| Command | Description |
+|---|---|
+| `make start` | Start both `polymarket-monitor` and `polymarket-cron` via PM2 |
+| `make stop` | Stop all processes |
+| `make restart` | Restart all processes and reload `.env` |
+| `make status` | PM2 process overview + last 10 signals |
+| `make logs` | Tail live logs for the monitor |
+| `make logs-cron` | Tail live logs for the cron collectors |
+
+### Inspection
+
+| Command | Description |
+|---|---|
+| `make once` | Run a single monitor cycle (no daemon, output to console) |
+| `make signals` | Last 20 signals with skip reasons |
+| `make live` | Only real (non-dry-run) executed orders |
+| `make positions` | Currently open copy positions |
+| `make history` | All positions including resolved + P&L |
+| `make whales` | Profitable whale wallets that pass quality filters |
+| `make discover` | Pull top wallets from Dune Analytics and score them |
+
+### DRY_RUN toggle
+
+| Command | Description |
+|---|---|
+| `make dry-on` | Set `DRY_RUN=true` in `.env` |
+| `make dry-off` | Set `DRY_RUN=false` in `.env` |
+
+> After toggling DRY_RUN, always run `make restart` to apply the change.
 
 ---
 
@@ -189,7 +228,7 @@ Scoring runs via the `collectWalletStats` collector (every 6h), `refreshStaleWal
 
 | Variable | Default | Description |
 |---|---|---|
-| `DRY_RUN` | `true` | No real orders sent — log as dry-run |
+| `DRY_RUN` | `true` | No real orders sent — log as dry-run. **Always verify pUSD allowance before setting to `false`** |
 | `MAX_ORDER_SIZE_USDC` | `100` | Hard cap per single order |
 | `PORTFOLIO_SIZE` | `1000` | Capital base for Kelly sizing |
 | `KELLY_CAP` | `0.25` | Fraction of full Kelly (25% = conservative) |
@@ -207,21 +246,125 @@ Scoring runs via the `collectWalletStats` collector (every 6h), `refreshStaleWal
 
 ## PM2 Daemon
 
+> `pm2` is a local dev dependency — use `pnpm exec pm2` everywhere, or install globally once with `pnpm add -g pm2` and then use `pm2` directly.
+
+### Start / Stop
+
 ```bash
-pm2 start ecosystem.config.cjs                  # start
-pm2 logs polymarket-monitor                      # tail live logs
-pm2 logs polymarket-monitor --lines 50           # last 50 lines
-pm2 restart polymarket-monitor --update-env      # restart after .env changes
-pm2 stop polymarket-monitor
-pm2 save && pm2 startup                          # persist across reboots
+pnpm exec pm2 start ecosystem.config.cjs   # start both: polymarket-monitor + polymarket-cron
+pnpm exec pm2 stop all                     # stop both
+pnpm exec pm2 stop polymarket-monitor      # stop only the monitor
+pnpm exec pm2 stop polymarket-cron         # stop only the cron collectors
+pnpm exec pm2 delete all                   # stop + remove from PM2 process list
+```
+
+### Restart (use --update-env after any .env change)
+
+```bash
+pnpm exec pm2 restart all --update-env
+pnpm exec pm2 restart polymarket-monitor --update-env
+pnpm exec pm2 restart polymarket-cron --update-env
+```
+
+### Status & Logs
+
+```bash
+pnpm exec pm2 status                                  # overview: pid, uptime, restarts, cpu/mem
+pnpm exec pm2 logs                                    # tail all logs (both processes)
+pnpm exec pm2 logs polymarket-monitor                 # tail monitor only
+pnpm exec pm2 logs polymarket-cron                    # tail cron only
+pnpm exec pm2 logs polymarket-monitor --lines 100     # last 100 lines
+pnpm exec pm2 logs --nostream --lines 50              # print last 50 lines and exit (no tail)
+pnpm exec pm2 flush                                   # clear all PM2 log files
+```
+
+### Persist across reboots
+
+```bash
+pnpm exec pm2 save          # save current process list
+pnpm exec pm2 startup       # print the command to register PM2 at boot (run it as sudo)
+pnpm exec pm2 unstartup     # remove from startup
+```
+
+### Inspect a process
+
+```bash
+pnpm exec pm2 describe polymarket-monitor   # full process details, env, restart history
+pnpm exec pm2 monit                         # real-time CPU/RAM dashboard (exit with q)
 ```
 
 **What healthy logs look like:**
 ```
-{"module":"stream","tradesScanned":150,"msg":"..."}          # every ~60s
-{"module":"stream","active":2,"msg":"Whales detected..."}    # when whale trades
-{"module":"monitor","whales":72,"msg":"Monitor cycle started"} # every 5 min
+{"module":"data-api","fetched":12,"msg":"Recent trades fetch complete"}   # every 15–60s
+{"module":"monitor","whales":82,"msg":"Monitor cycle started"}            # every 5 min
+{"module":"monitor","wallet":"0xabc...","freshPositions":3}               # whale detected
+{"module":"executor","dryRun":true,"msg":"DRY_RUN=true — order NOT submitted"}
 {"module":"monitor","msg":"Monitor cycle complete"}
+```
+
+---
+
+## Operations Reference
+
+### Check current state
+
+```bash
+grep DRY_RUN .env                              # is DRY_RUN on or off?
+pnpm dev copy status                           # last 20 signals with skip reasons
+pnpm dev copy status -n 50                     # last 50 signals
+pnpm dev copy status --live                    # only executed (non-dry-run) signals
+pnpm dev copy positions                        # currently open copy positions
+pnpm dev copy positions --history              # all positions including resolved + P&L
+pnpm dev whales top --profitable               # scored whale wallets that pass filters
+pnpm dev whales top -n 20                      # top 20 whales by ROI
+pnpm dev whales show <address>                 # full stats for one wallet
+pnpm dev orders list                           # open orders on CLOB for your wallet
+pnpm dev orders history                        # trade history for your wallet
+```
+
+### Market inspection
+
+```bash
+pnpm dev markets list --limit 10               # latest active markets
+pnpm dev markets list --closed --limit 10      # recently closed markets
+pnpm dev markets get <slug-or-conditionId>     # single market details
+pnpm dev markets traders <conditionId>         # top traders for a market
+pnpm dev orderbook <tokenId>                   # live bids/asks for a token
+pnpm dev wallet positions <address>            # positions for any wallet address
+```
+
+### Whale management
+
+```bash
+pnpm dev whales discover                       # pull top wallets from Dune + score all
+pnpm dev whales scan                           # re-score wallets already in DB
+pnpm dev whales seed wallets.csv               # seed from a CSV/TXT file of addresses
+```
+
+### One-off test cycles
+
+```bash
+pnpm dev copy start --once                     # single monitor cycle, output to console
+pnpm dev cron                                  # run all collectors once then keep on schedule
+```
+
+### Switching to live trading
+
+Checklist before setting `DRY_RUN=false`:
+
+1. `make once` — confirm signals look reasonable, no crashes
+2. Verify pUSD balance: [polymarket.com](https://polymarket.com) → Portfolio
+3. Approve pUSD for V2 exchange: **Settings → Trading → Approve** in the Polymarket UI
+4. Verify `MAX_ORDER_SIZE_USDC` in `.env` is set to a small amount (e.g. `5`)
+5. `make dry-off` — set `DRY_RUN=false`
+6. `make restart` — apply the change
+7. `make logs` — watch for the first executed order
+8. `make live` — confirm a real signal appears with an `orderId`
+9. `pnpm dev orders list` — confirm the order is live on the CLOB
+
+To revert to dry-run at any time:
+```bash
+make dry-on && make restart
 ```
 
 ---
@@ -307,6 +450,23 @@ ecosystem.config.cjs      PM2 process config
 - All signals persisted in `signals` table with full skip reasons for diagnostics
 - Secrets in `~/.polymarket-secrets`, never in the repository
 - Use a dedicated hot wallet with limited USDC balance — not your primary wallet
+
+---
+
+## Polymarket V2 API Notes
+
+Polymarket migrated to **CLOB V2** in early 2026. This codebase targets V2 exclusively.
+
+| Area | V2 behavior |
+|---|---|
+| SDK | `@polymarket/clob-client-v2` (replaces deprecated `@polymarket/clob-client`) |
+| Order signing | EIP-712 domain version `"2"`, new exchange contract addresses |
+| Order struct | `timestamp` replaces `nonce`; `feeRateBps` and `taker` removed |
+| Fees | Determined by protocol at match time; not embedded in the signed order |
+| Collateral | **pUSD** (Polymarket USD) on Polygon — replaces USDC.e |
+| Positions API | `data-api.polymarket.com/positions` — Gamma API no longer serves `/positions` |
+| Tick size | Required at order creation; fetched live via `getTickSize(tokenId)` |
+| Proxy wallets | Supported via `SignatureTypeV2.POLY_PROXY` + `funderAddress` in constructor |
 
 ---
 

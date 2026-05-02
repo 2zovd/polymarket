@@ -1,49 +1,92 @@
-.PHONY: start stop restart status logs
+.PHONY: help start stop restart status logs logs-cron once signals live positions history whales discover dry-on dry-off
 
 SHELL    := /bin/zsh
-FNM_PATH := /opt/homebrew/bin/fnm
 PNPM     := $(shell eval "$$(/opt/homebrew/bin/fnm env --shell bash 2>/dev/null)" && which pnpm 2>/dev/null)
-LOG_FILE := logs/bot.log
-BOT_CMD  := src/index.ts copy start
+PM2      := $(PNPM) exec pm2
+DEV      := $(PNPM) dev
 
+# ── default: show help ────────────────────────────────────────────────────────
+help:
+	@echo ""
+	@echo "  Polymarket Bot — команды"
+	@echo ""
+	@echo "  Daemon (PM2)"
+	@echo "    make start       — запустить monitor + cron"
+	@echo "    make stop        — остановить всё"
+	@echo "    make restart     — перезапустить (применяет .env)"
+	@echo "    make status      — статус PM2 + последние сигналы"
+	@echo "    make logs        — tail логов монитора"
+	@echo "    make logs-cron   — tail логов крона"
+	@echo ""
+	@echo "  Тест"
+	@echo "    make once        — один цикл монитора (без демона)"
+	@echo ""
+	@echo "  Мониторинг"
+	@echo "    make signals     — последние 20 сигналов"
+	@echo "    make live        — только реально исполненные ордера"
+	@echo "    make positions   — открытые позиции"
+	@echo "    make history     — все позиции + P&L"
+	@echo "    make whales      — прибыльные киты"
+	@echo "    make discover    — обновить список китов (Dune)"
+	@echo ""
+	@echo "  DRY_RUN"
+	@echo "    make dry-on      — включить DRY_RUN=true"
+	@echo "    make dry-off     — отключить DRY_RUN=false"
+	@echo ""
+
+# ── daemon ────────────────────────────────────────────────────────────────────
 start:
-	@if pgrep -qf "$(BOT_CMD)"; then \
-		echo "⚠️  Bot already running (PID $$(pgrep -f '$(BOT_CMD)' | head -1))"; \
-		exit 1; \
-	fi
-	@mkdir -p logs
-	@caffeinate -i $(PNPM) dev copy start >> $(LOG_FILE) 2>&1 &
-	@sleep 3
-	@if pgrep -qf "$(BOT_CMD)"; then \
-		echo "✅ Bot started (PID $$(pgrep -f '$(BOT_CMD)' | head -1))"; \
-	else \
-		echo "❌ Bot failed to start — last 20 lines:"; \
-		tail -20 $(LOG_FILE); \
-		exit 1; \
-	fi
+	@$(PM2) start ecosystem.config.cjs
+	@$(PM2) save
 
 stop:
-	@if pgrep -qf "$(BOT_CMD)"; then \
-		pkill -f "$(BOT_CMD)" && echo "🛑 Bot stopped"; \
-	else \
-		echo "Bot is not running"; \
-	fi
+	@$(PM2) stop all
 
-restart: stop
-	@sleep 1
-	@$(MAKE) start
+restart:
+	@$(PM2) restart all --update-env
 
 status:
-	@if pgrep -qf "$(BOT_CMD)"; then \
-		echo "✅ Running  PID: $$(pgrep -f '$(BOT_CMD)' | head -1)"; \
-	else \
-		echo "❌ Not running"; \
-	fi
+	@$(PM2) status
 	@echo ""
-	@echo "Last 5 log entries:"
-	@tail -5 $(LOG_FILE) 2>/dev/null | python3 -c \
-		"import sys,json; [print(json.loads(l).get('msg','')) for l in sys.stdin if l.strip()]" \
-		2>/dev/null || tail -5 $(LOG_FILE) 2>/dev/null
+	@$(DEV) copy status -n 10
 
+# ── logs ──────────────────────────────────────────────────────────────────────
 logs:
-	@tail -f $(LOG_FILE)
+	@$(PM2) logs polymarket-monitor --lines 50
+
+logs-cron:
+	@$(PM2) logs polymarket-cron --lines 50
+
+# ── test cycle ────────────────────────────────────────────────────────────────
+once:
+	@$(DEV) copy start --once
+
+# ── inspection ────────────────────────────────────────────────────────────────
+signals:
+	@$(DEV) copy status -n 20
+
+live:
+	@$(DEV) copy status --live
+
+positions:
+	@$(DEV) copy positions
+
+history:
+	@$(DEV) copy positions --history
+
+whales:
+	@$(DEV) whales top --profitable
+
+discover:
+	@$(DEV) whales discover
+
+# ── dry run toggle ────────────────────────────────────────────────────────────
+dry-on:
+	@sed -i '' 's/^DRY_RUN=.*/DRY_RUN=true/' .env
+	@grep DRY_RUN .env
+	@echo "→ make restart чтобы применить"
+
+dry-off:
+	@sed -i '' 's/^DRY_RUN=.*/DRY_RUN=false/' .env
+	@grep DRY_RUN .env
+	@echo "→ make restart чтобы применить"

@@ -87,14 +87,5 @@ export function createGammaClient(config: AppConfig, log: Logger) {
       return data;
     },
 
-    /** All open positions for a wallet address across all markets. */
-    async getWalletPositions(walletAddress: string): Promise<unknown[]> {
-      childLog.debug({ walletAddress }, 'Fetching wallet positions');
-      const { data } = await http.get<unknown[]>('/positions', {
-        params: { user: walletAddress },
-      });
-      childLog.info({ walletAddress, count: data.length }, 'Positions fetched');
-      return data;
-    },
   };
 }

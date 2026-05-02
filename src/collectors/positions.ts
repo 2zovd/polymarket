@@ -1,28 +1,16 @@
 import { eq } from 'drizzle-orm';
 import type { Logger } from 'pino';
-import type { GammaClient } from '../api/gamma.js';
+import type { DataApiClient } from '../api/data.js';
 import type { DbClient } from '../db/index.js';
 import { positions, walletStats } from '../db/schema.js';
-
-// Gamma API position shape (untyped in gamma client — validate defensively here).
-interface GammaPosition {
-  proxyWallet?: string;
-  user?: string;
-  asset?: string;
-  conditionId?: string;
-  outcome?: string;
-  size?: number | string;
-  avgPrice?: number | string;
-  currentValue?: number | string;
-  initialValue?: number | string;
-}
 
 // Collects positions for all wallets already tracked in wallet_stats.
 // On first run (empty wallet_stats) this is a no-op — wallets get populated from trades.
 // Designed to run every hour — idempotent (upsert on wallet+token composite).
+// Uses Data API (data-api.polymarket.com) — Gamma API no longer serves /positions.
 
 export async function collectPositions(
-  gamma: GammaClient,
+  dataApi: DataApiClient,
   db: DbClient,
   log: Logger,
 ): Promise<void> {
@@ -44,26 +32,21 @@ export async function collectPositions(
   let totalUpserted = 0;
 
   for (const { walletAddress } of trackedWallets) {
-    let raw: unknown[];
+    let raw: Awaited<ReturnType<typeof dataApi.getWalletPositions>>;
     try {
-      raw = await gamma.getWalletPositions(walletAddress);
+      raw = await dataApi.getWalletPositions(walletAddress);
     } catch (err) {
       childLog.warn({ walletAddress, err }, 'Failed to fetch positions for wallet — skipping');
       continue;
     }
 
-    for (const item of raw) {
-      const pos = item as GammaPosition;
-      const tokenId = pos.asset ?? '';
-      const market = pos.conditionId ?? '';
+    for (const pos of raw) {
+      const tokenId = pos.asset;
+      const market = pos.conditionId;
 
       if (!tokenId || !market) continue;
 
-      const size = Number(pos.size ?? 0);
-      const avgPrice = Number(pos.avgPrice ?? 0);
-      const currentValue = Number(pos.currentValue ?? 0);
-      const initialValue = Number(pos.initialValue ?? 0);
-      const unrealizedPnl = currentValue - initialValue;
+      const unrealizedPnl = pos.curPrice * pos.size - pos.initialValue;
 
       const existing = await db
         .select({ walletAddress: positions.walletAddress })
@@ -75,9 +58,9 @@ export async function collectPositions(
         walletAddress,
         tokenId,
         market,
-        outcome: pos.outcome ?? '',
-        size,
-        avgPrice,
+        outcome: pos.outcome,
+        size: pos.size,
+        avgPrice: pos.avgPrice,
         unrealizedPnl,
         updatedAt: now,
       };
