@@ -2,11 +2,11 @@
 
 Autonomous whale-tracking and copy-trading bot for Polymarket — built in TypeScript.
 
-- Scores wallets by ROI / win_rate / p-value (Kelly criterion)
-- Tracks profitable whale positions in real time via Polymarket Data API
-- Automatically copies new entries through the CLOB API
+- Scores wallets by ROI / Brier score / two-tailed t-test p-value; flags `isSharp` wallets (p<0.01, ROI>5%, Brier<0.22)
+- Tracks `isSharp` whale positions in real time via Polymarket Data API
+- Automatically copies new entries through the CLOB API (V2 — `@polymarket/clob-client-v2`)
 - Discovers top traders from Dune Analytics (query 6979866)
-- Two-tier monitor: trade stream (60s) + full snapshot (5 min) for fast detection at low API cost
+- Two-tier monitor: trade stream (fast polling) + full snapshot (5 min) for low-latency detection at low API cost
 - Sends Telegram alerts on every executed signal
 - Runs as a PM2 daemon with auto-restart on crash and reboot
 
@@ -94,7 +94,7 @@ Polymarket V2 uses **pUSD** (Polymarket USD) as collateral instead of USDC.e. Be
 ```bash
 # 1. Discover and score profitable whale wallets
 pnpm dev whales discover               # fetches top-500 from Dune, scores each
-pnpm dev whales top --profitable       # review: should show 40-80 flagged wallets
+pnpm dev whales top --profitable       # review: typically 5–15 isSharp wallets after scoring
 
 # 2. Test one monitor cycle (DRY_RUN=true — no real orders)
 pnpm dev copy start --once             # single cycle, logs all signals to console
@@ -152,10 +152,13 @@ Run `make` with no arguments to print the full command list.
 | `markets list [--limit N] [--closed] [--tag X]` | List markets from Gamma API |
 | `markets get <slug\|conditionId>` | Single market by slug or condition ID |
 | `markets traders <conditionId> [--limit N]` | Top traders for a market |
+| `markets tokens <slug>` | CLOB token IDs + current prices per outcome |
 | `orderbook <tokenId>` | Live CLOB orderbook |
 | `orders list` | Open orders for configured wallet |
 | `orders history` | Trade history for configured wallet |
 | `orders derive-keys` | Generate L2 API credentials (run once) |
+| `orders cancel <orderId>` | Cancel an open order by ID |
+| `orders test-buy --token-id X --price Y [--size Z]` | Place a direct GTC limit buy (bypass signal logic) |
 | `wallet positions <address>` | Open positions for any wallet |
 | `whales scan` | Re-score all wallets accumulated from trade stream |
 | `whales discover [--query N] [--limit N]` | Fetch wallets from Dune and score them |
@@ -174,39 +177,46 @@ Run `make` with no arguments to print the full command list.
 ### Detection Architecture (two-tier)
 
 ```
-                    ┌─ Trade Stream (every 60s) ──────────────────────────┐
+                    ┌─ Trade Stream (STREAM_INTERVAL_SECONDS) ────────────┐
                     │  GET /trades?since=cursor  →  1 API call             │
-                    │  Filter: which profitable whales traded?             │
-                    │  For each active whale: fetch /positions  (0–5 calls)│
+                    │  Filter: which isSharp whales traded?                │
+                    │  For each active whale: fetch /positions  (0–N calls)│
                     │  → diff → signal pipeline                            │
                     └─────────────────────────────────────────────────────┘
 
-                    ┌─ Full Snapshot (every 5 min) ────────────────────────┐
-                    │  GET /positions for ALL 72 whales  (72 API calls)    │
+                    ┌─ Full Snapshot (MONITOR_INTERVAL_SECONDS = 5 min) ───┐
+                    │  GET /positions for ALL tracked isSharp whales       │
                     │  → update watched_positions snapshot                  │
                     │  → resolve settled open_positions                    │
                     └─────────────────────────────────────────────────────┘
 ```
 
-Detection latency: **~60 seconds** (was 5 minutes). API load: **−80%** vs previous architecture.
+Detection latency: configurable via `STREAM_INTERVAL_SECONDS` (default 60s). API load: **−80%** vs full-snapshot-only architecture.
 
 ### Signal Pipeline
 
 ```
-Dune Analytics ──→ whales discover ──→ wallet_stats (ROI, p-value, Brier score)
+Dune Analytics ──→ whales discover ──→ wallet_stats (ROI, Brier score, p-value)
+                                                │
+                            wallet selection — DB-level filter:
+                              · isSharp = true  (p<0.01, ROI>5%, Brier<0.22,
+                                                  resolvedTrades≥30)
+                              · roi ≥ MIN_WHALE_ROI
+                              · resolvedTrades > MIN_WHALE_TRADES
                                                 │
                  Trade stream or full snapshot detects new/grown position
+                 (position must grow >20% AND ≥ MIN_POSITION_USDC in one cycle)
                                                 │
                             generateSignal — quality gates:
-                              · whale ROI ≥ MIN_WHALE_ROI (2%)
-                              · p-value < MIN_WHALE_PVALUE (5%)
-                              · resolvedTrades > MIN_WHALE_TRADES (30)
-                              · initialValue ≥ MIN_POSITION_USDC ($10)
-                              · market active in DB
-                              · market expires in > MIN_MARKET_HOURS_REMAINING (4h)
+                              · initialValue ≥ MIN_POSITION_USDC
+                              · market active + acceptingOrders in DB
+                              · market expires in > MIN_MARKET_HOURS_REMAINING
                               · not already in open_positions (dedup)
-                              · edge = whaleAvgPrice − currentAsk ≥ MIN_EDGE_PCT (1%)
+                              · currentAsk ≤ MAX_COPY_ASK (no near-certain markets)
+                              · currentAsk / whaleAvgPrice ≥ MIN_WHALE_ASK_RATIO
+                                (skip if market collapsed vs whale's entry)
                                                 │
+                   edge = whaleAvgPrice − currentAsk  (must be > 0 for Kelly to fire)
                    kellySize = (edge / (1 − ask)) × KELLY_CAP × PORTFOLIO_SIZE
                    capped at MAX_ORDER_SIZE_USDC
                                                 │
@@ -215,12 +225,18 @@ Dune Analytics ──→ whales discover ──→ wallet_stats (ROI, p-value, B
 
 ### Wallet Scoring
 
-Wallets are scored using three criteria — all must pass for `isProfitable = true`:
+Two flags are computed in `src/analytics/wallet-scorer.ts` and stored in `wallet_stats`:
 
-- **ROI > 0** and **p-value < 0.05** (statistically significant positive returns)
-- **resolvedTrades ≥ 30** (enough history to trust the signal)
+| Flag | Criteria | Used for |
+|---|---|---|
+| `isProfitable` | p < 0.01, ROI > 0, resolvedTrades ≥ 30 | Reference only |
+| `isSharp` | p < 0.01, ROI > 5%, Brier score < 0.22, resolvedTrades ≥ 30 | **Copy trading whale selection** |
+
+`isSharp` is the stricter signal: it adds calibration quality (Brier score) and a meaningful ROI floor. The p-value threshold of 0.01 (vs the naïve 0.05) reduces false positives from multiple comparisons across hundreds of wallets.
 
 Scoring runs via the `collectWalletStats` collector (every 6h), `refreshStaleWallets` (daily for wallets not updated in 7+ days), and `collectDuneWallets` (weekly auto-discovery on Sundays).
+
+After changing scoring thresholds, run `pnpm dev whales scan` to re-score existing wallets.
 
 ---
 
@@ -232,14 +248,16 @@ Scoring runs via the `collectWalletStats` collector (every 6h), `refreshStaleWal
 | `MAX_ORDER_SIZE_USDC` | `100` | Hard cap per single order |
 | `PORTFOLIO_SIZE` | `1000` | Capital base for Kelly sizing |
 | `KELLY_CAP` | `0.25` | Fraction of full Kelly (25% = conservative) |
-| `STREAM_INTERVAL_SECONDS` | `60` | Trade stream polling frequency |
-| `MONITOR_INTERVAL_SECONDS` | `300` | Full snapshot refresh frequency |
-| `MIN_WHALE_ROI` | `0.02` | Minimum whale ROI to copy (2%) |
-| `MIN_WHALE_PVALUE` | `0.05` | Maximum p-value for significance |
-| `MIN_WHALE_TRADES` | `30` | Minimum resolved trades required |
-| `MIN_EDGE_PCT` | `0.01` | Minimum price edge to enter (1%) |
-| `MIN_POSITION_USDC` | `10` | Skip whale positions below this size |
-| `MIN_MARKET_HOURS_REMAINING` | `4` | Skip markets expiring within N hours |
+| `STREAM_INTERVAL_SECONDS` | `60` | Trade stream polling frequency (seconds) |
+| `MONITOR_INTERVAL_SECONDS` | `300` | Full snapshot refresh frequency (seconds) |
+| `MIN_WHALE_ROI` | `0.02` | Additional ROI floor for DB-level whale pre-filter (isSharp already requires >5%) |
+| `MIN_WHALE_PVALUE` | `0.05` | Additional p-value floor for DB pre-filter (isSharp uses hardcoded p<0.01 in scorer) |
+| `MIN_WHALE_TRADES` | `30` | Additional resolved-trades floor for DB pre-filter |
+| `MIN_POSITION_USDC` | `10` | Skip whale positions below this USDC value; also used as growth detection floor |
+| `MIN_MARKET_HOURS_REMAINING` | `4` | Skip markets expiring within N hours (0 = allow micro-markets) |
+| `MAX_COPY_ASK` | `0.85` | Skip if current ask exceeds this — market already priced in |
+| `MIN_WHALE_ASK_RATIO` | `0.5` | Skip if currentAsk < ratio × whaleAvgPrice — market collapsed vs whale's entry |
+| `MAX_POSITION_AGE_HOURS` | `8` | Skip positions first seen more than N hours ago |
 | `MAX_OPEN_POSITIONS` | `20` | Max simultaneous copy positions |
 
 ---
@@ -476,14 +494,18 @@ Polymarket migrated to **CLOB V2** in early 2026. This codebase targets V2 exclu
 
 - [ ] **Backtesting** — replay the last 6 months of whale positions against resolved markets. Simulate: if we had copied every signal from our 72 profitable wallets, what would the P&L be? Requires pulling historical trades + resolved outcomes from Gamma and running the signal pipeline offline.
 
-- [ ] **Position age filter** — skip whale positions entered more than X days ago (e.g. 7 days). Currently we can copy a position the whale entered weeks ago when it appears "new" to us (e.g. after a wallet re-scores). Configurable via `MAX_POSITION_AGE_DAYS`.
-
 - [ ] **Multi-outcome market support** — categorical markets (>2 outcomes) are partially supported but the edge calculation and Kelly sizing assume binary Yes/No. Needs outcome-aware pricing from the CLOB.
 
-- [ ] **Wallet quality decay** — wallets that haven't traded in 30+ days should have their `isProfitable` flag re-evaluated. Sharp streaks decay; stale signals shouldn't be trusted.
+- [ ] **Wallet quality decay** — wallets that haven't traded in 30+ days should have their `isSharp` flag re-evaluated. Sharp streaks decay; stale signals shouldn't be trusted.
 
 - [ ] **Signal confidence score** — composite score combining p-value, ROI, resolvedTrades, and edge magnitude. Use as a multiplier on Kelly size instead of a hard cutoff threshold.
 
 - [ ] **Web dashboard** — minimal read-only UI: live signals, open positions with unrealised P&L, whale leaderboard. Next.js or plain HTML served from the same process.
 
 - [ ] **Live trading validation** — before switching `DRY_RUN=false`: verify order placement end-to-end on a small position ($5–10), confirm open_positions tracking, confirm P&L resolution, confirm Telegram alert fires with order ID.
+
+- [ ] **Coordinated entry detector** — signal confidence boost when 2+ independent `isSharp` wallets enter the same market/direction within a rolling 15-minute window. Reduces adverse selection vs. single-wallet signals.
+
+- [ ] **Wallet clustering by funding source** — build cross-wallet reputation by grouping wallets funded from the same CEX withdrawal address (via Polygonscan). Sophisticated traders use fresh wallets per position; clustering recovers their track record across wallets.
+
+- [ ] **Kelly probability fix** — currently uses `whaleAvgPrice` as the true probability estimate (p = whale's entry price). This conflates market price at entry with the whale's subjective belief. A better estimate requires an independent probability model (calibrated base rates, bookmaker odds, or ensemble of market signals).
