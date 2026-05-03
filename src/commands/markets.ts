@@ -41,4 +41,37 @@ export function registerMarketsCommand(program: Command): void {
       const traders = await gamma.getMarketTraders(conditionId, Number.parseInt(opts.limit, 10));
       process.stdout.write(`${JSON.stringify(traders, null, 2)}\n`);
     });
+
+  markets
+    .command('tokens <slug>')
+    .description('Show CLOB token IDs for each outcome — use the market slug from the Polymarket URL')
+    .action(async (slug: string) => {
+      const gamma = createGammaClient(config, logger);
+      const market = await gamma.getMarket(slug);
+
+      const outcomes: string[] = market.outcomes ? JSON.parse(market.outcomes) : [];
+      const tokenIds: string[] = market.clobTokenIds ? JSON.parse(market.clobTokenIds) : [];
+      const prices: string[] = market.outcomePrices ? JSON.parse(market.outcomePrices) : [];
+      const tokens = market.tokens ?? [];
+
+      process.stdout.write(`\n${market.question}\n${'─'.repeat(60)}\n`);
+
+      if (tokenIds.length > 0) {
+        tokenIds.forEach((id, i) => {
+          const outcome = outcomes[i] ?? tokens[i]?.outcome ?? `Outcome ${i}`;
+          const price = prices[i] ?? tokens[i]?.price ?? '?';
+          process.stdout.write(`\n[${outcome}]\n  token_id : ${id}\n  price    : ${price}\n`);
+        });
+      } else if (tokens.length > 0) {
+        tokens.forEach((t) => {
+          process.stdout.write(`\n[${t.outcome}]\n  token_id : ${t.tokenId}\n  price    : ${t.price}\n`);
+        });
+      } else {
+        process.stdout.write('No token IDs found — market may be categorical or use a different schema.\n');
+        process.stdout.write(`Raw clobTokenIds: ${market.clobTokenIds ?? 'null'}\n`);
+      }
+
+      process.stdout.write(`\ncondition_id : ${market.conditionId}\n`);
+      process.stdout.write(`status       : ${market.active ? 'active' : market.closed ? 'closed' : 'resolved'}\n\n`);
+    });
 }

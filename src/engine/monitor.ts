@@ -238,12 +238,11 @@ async function scanWhale(
         break;
       }
 
-      // Cross-cycle guard: reserve synchronously BEFORE any await to close the TOCTOU window.
-      // Both stream and monitor cycles share this module-level set, so whichever cycle
-      // reaches this token first wins — the other will see it on its next guard check.
+      // Cross-cycle guard: reserve sessionTokenGuard synchronously BEFORE any await to close
+      // the TOCTOU window. openTokenIds is intentionally NOT updated yet — generateSignal
+      // checks it to detect same-cycle duplicates, so it must not contain the current token.
       if (sessionTokenGuard.has(pos.tokenId)) continue;
       sessionTokenGuard.add(pos.tokenId);
-      openTokenIds.add(pos.tokenId);
 
       const signal = await generateSignal(
         pos,
@@ -255,15 +254,19 @@ async function scanWhale(
       );
 
       if (signal.status !== 'ready') {
-        // Signal filtered out — release so future cycles can re-evaluate this position.
+        // Signal filtered out — release session guard so future cycles can re-evaluate.
         sessionTokenGuard.delete(pos.tokenId);
-        openTokenIds.delete(pos.tokenId);
+        continue;
       }
+
+      // Signal passed all quality gates — now reserve in openTokenIds so subsequent
+      // whales in this cycle don't double-enter the same token.
+      openTokenIds.add(pos.tokenId);
 
       const execResult = await executeSignal(signal, clob, db, log, config);
 
-      if (signal.status === 'ready' && execResult.status !== 'executed' && execResult.status !== 'dry-run') {
-        // Order failed — release so future cycles can retry.
+      if (execResult.status !== 'executed' && execResult.status !== 'dry-run') {
+        // Order failed — release both guards so future cycles can retry.
         sessionTokenGuard.delete(pos.tokenId);
         openTokenIds.delete(pos.tokenId);
       }

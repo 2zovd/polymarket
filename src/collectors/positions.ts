@@ -6,8 +6,17 @@ import { positions, walletStats } from '../db/schema.js';
 
 // Collects positions for all wallets already tracked in wallet_stats.
 // On first run (empty wallet_stats) this is a no-op — wallets get populated from trades.
-// Designed to run every hour — idempotent (upsert on wallet+token composite).
+// Designed to run every hour — full refresh per wallet (DELETE + batch INSERT).
 // Uses Data API (data-api.polymarket.com) — Gamma API no longer serves /positions.
+
+// better-sqlite3 executes synchronously on the main thread even behind async/await —
+// resolved promises only yield to the microtask queue, not the macrotask queue where
+// node-cron timers live. setImmediate explicitly yields to the macrotask queue.
+function yieldToEventLoop(): Promise<void> {
+  return new Promise((resolve) => setImmediate(resolve));
+}
+
+const CHUNK = 200;
 
 export async function collectPositions(
   dataApi: DataApiClient,
@@ -37,42 +46,34 @@ export async function collectPositions(
       raw = await dataApi.getWalletPositions(walletAddress);
     } catch (err) {
       childLog.warn({ walletAddress, err }, 'Failed to fetch positions for wallet — skipping');
+      await yieldToEventLoop();
       continue;
     }
 
-    for (const pos of raw) {
-      const tokenId = pos.asset;
-      const market = pos.conditionId;
+    // Full refresh: delete stale snapshot, then insert the current state from the API.
+    // The API always returns the complete current position set for the wallet.
+    await db.delete(positions).where(eq(positions.walletAddress, walletAddress));
 
-      if (!tokenId || !market) continue;
-
-      const unrealizedPnl = pos.curPrice * pos.size - pos.initialValue;
-
-      const existing = await db
-        .select({ walletAddress: positions.walletAddress })
-        .from(positions)
-        .where(eq(positions.walletAddress, walletAddress))
-        .get();
-
-      const row = {
+    const rows = raw
+      .filter((pos) => pos.asset && pos.conditionId)
+      .map((pos) => ({
         walletAddress,
-        tokenId,
-        market,
+        tokenId: pos.asset,
+        market: pos.conditionId,
         outcome: pos.outcome,
         size: pos.size,
         avgPrice: pos.avgPrice,
-        unrealizedPnl,
+        unrealizedPnl: pos.curPrice * pos.size - pos.initialValue,
         updatedAt: now,
-      };
+      }));
 
-      if (existing) {
-        await db.update(positions).set(row).where(eq(positions.walletAddress, walletAddress));
-      } else {
-        await db.insert(positions).values(row);
-      }
-
-      totalUpserted++;
+    for (let i = 0; i < rows.length; i += CHUNK) {
+      await db.insert(positions).values(rows.slice(i, i + CHUNK));
+      await yieldToEventLoop();
     }
+
+    totalUpserted += rows.length;
+    await yieldToEventLoop();
   }
 
   childLog.info({ totalUpserted }, 'Position collection complete');

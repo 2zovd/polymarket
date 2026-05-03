@@ -56,8 +56,16 @@ export function createGammaClient(config: AppConfig, log: Logger) {
 
     async getMarket(slugOrConditionId: string): Promise<Market> {
       childLog.debug({ slugOrConditionId }, 'Fetching market');
-      const { data } = await http.get<Market>(`/markets/${slugOrConditionId}`);
-      return data;
+      // Condition IDs are 0x-prefixed hex — use path param.
+      // Slugs must be passed as query param (?slug=) — /markets/<slug> returns 422.
+      if (slugOrConditionId.startsWith('0x')) {
+        const { data } = await http.get<Market>(`/markets/${slugOrConditionId}`);
+        return data;
+      }
+      const { data } = await http.get<Market[]>('/markets', { params: { slug: slugOrConditionId } });
+      const market = data[0];
+      if (!market) throw new Error(`No market found for slug: ${slugOrConditionId}`);
+      return market;
     },
 
     /**

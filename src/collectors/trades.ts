@@ -12,6 +12,13 @@ import { trades } from '../db/schema.js';
 // Running every 15 min keeps the window fresh and well within the cap.
 const DEFAULT_LOOKBACK_SECONDS = 6 * 60 * 60;
 
+// better-sqlite3 executes synchronously on the main thread even behind async/await —
+// resolved promises only yield to the microtask queue, not the macrotask queue where
+// node-cron timers live. setImmediate explicitly yields to the macrotask queue.
+function yieldToEventLoop(): Promise<void> {
+  return new Promise((resolve) => setImmediate(resolve));
+}
+
 export async function collectTrades(
   dataApi: DataApiClient,
   db: DbClient,
@@ -61,6 +68,7 @@ export async function collectTrades(
       .insert(trades)
       .values(rows.slice(i, i + CHUNK))
       .onConflictDoNothing({ target: trades.id });
+    await yieldToEventLoop();
   }
 
   childLog.info({ inserted: rows.length }, 'Trade collection complete');

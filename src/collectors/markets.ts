@@ -10,6 +10,13 @@ import type { MarketStatus } from '../types.js';
 
 const PAGE_SIZE = 500;
 
+// better-sqlite3 executes synchronously on the main thread even behind async/await —
+// resolved promises only yield to the microtask queue, not the macrotask queue where
+// node-cron timers live. setImmediate explicitly yields to the macrotask queue.
+function yieldToEventLoop(): Promise<void> {
+  return new Promise((resolve) => setImmediate(resolve));
+}
+
 function deriveStatus(active: boolean, closed: boolean): MarketStatus {
   if (closed) return 'closed';
   if (active) return 'active';
@@ -87,6 +94,7 @@ async function upsertMarketPage(
           updatedAt: markets.updatedAt,
         },
       });
+    await yieldToEventLoop();
   }
   return rows.length;
 }
@@ -102,6 +110,7 @@ export async function collectMarkets(gamma: GammaClient, db: DbClient, log: Logg
     const page = await gamma.getMarkets({ limit: PAGE_SIZE, offset, active: true });
     if (page.length === 0) break;
     totalUpserted += await upsertMarketPage(db, page, new Date().toISOString());
+    await yieldToEventLoop();
     if (page.length < PAGE_SIZE) break;
     offset += PAGE_SIZE;
   }
@@ -131,6 +140,7 @@ export async function collectResolvedMarkets(
     });
     if (results.length === 0) break;
     totalCount += await upsertMarketPage(db, results, new Date().toISOString());
+    await yieldToEventLoop();
     if (results.length < PAGE_SIZE) break;
     offset += PAGE_SIZE;
   }
