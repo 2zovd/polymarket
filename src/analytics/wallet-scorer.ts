@@ -6,7 +6,7 @@ const MIN_RESOLVED = 30;
 // Sharp wallet thresholds (per plan).
 const SHARP_ROI = 0.05;
 const SHARP_BRIER = 0.22;
-const SHARP_P_VALUE = 0.05;
+const SHARP_P_VALUE = 0.01;
 
 export interface WalletScore {
   totalTrades: number;

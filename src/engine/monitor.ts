@@ -21,7 +21,7 @@ const sessionTokenGuard = new Set<string>();
 
 async function loadWhaleWallets(db: DbClient, config: AppConfig) {
   const baseConditions = and(
-    eq(walletStats.isProfitable, true),
+    eq(walletStats.isSharp, true),
     gt(walletStats.resolvedTrades, config.minWhaleTrades),
     gte(walletStats.roi, config.minWhaleRoi),
   );
@@ -198,7 +198,7 @@ async function scanWhale(
   const newPositions = positions.filter((pos) => {
     const prev = prevSnapshot.get(pos.tokenId);
     if (prev === undefined) return true;
-    return pos.size > prev.size * 1.2 && pos.size - prev.size > 1;
+    return pos.size > prev.size * 1.2 && pos.size - prev.size >= config.minPositionUsdc;
   });
 
   // Age filter: skip positions first seen longer than maxPositionAgeHours ago.

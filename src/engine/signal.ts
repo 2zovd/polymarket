@@ -58,16 +58,6 @@ export async function generateSignal(
     return skip('already_positioned');
   }
 
-  // Quality gate — wallet must meet all thresholds
-  if (!walletScore.roi || walletScore.roi < config.minWhaleRoi) {
-    return skip(`wallet_roi_low: ${walletScore.roi?.toFixed(3) ?? 'null'}`);
-  }
-  if (!walletScore.pValue || walletScore.pValue > config.minWhalePvalue) {
-    return skip(`wallet_pvalue_high: ${walletScore.pValue?.toFixed(4) ?? 'null'}`);
-  }
-  if (walletScore.resolvedTrades < config.minWhaleTrades) {
-    return skip(`wallet_trades_low: ${walletScore.resolvedTrades}`);
-  }
   if (position.initialValue < config.minPositionUsdc) {
     return skip(`position_too_small: ${position.initialValue.toFixed(2)} USDC`);
   }
@@ -164,19 +154,7 @@ export async function generateSignal(
     }
   }
 
-  // Slippage gate: how much did the market move against us since whale's entry.
-  // Negative minEdgePct allows some slippage (e.g. -0.15 = up to 15 cents above whale entry).
   const edge = position.avgPrice - currentAsk;
-  if (edge < config.minEdgePct) {
-    return {
-      ...base,
-      currentAsk,
-      edge,
-      kellySize: 0,
-      status: 'skipped',
-      skipReason: `edge_too_low: ${edge.toFixed(4)} (need ${config.minEdgePct})`,
-    };
-  }
 
   const { size } = kellySize(position.avgPrice, currentAsk, config);
   if (size <= 0) {

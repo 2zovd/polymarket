@@ -44,9 +44,6 @@ const EnvSchema = z.object({
   MIN_WHALE_ROI: z.coerce.number().default(0.02),
   MIN_WHALE_TRADES: z.coerce.number().int().positive().default(30),
   MIN_WHALE_PVALUE: z.coerce.number().positive().max(1).default(0.05),
-  // Maximum allowed price slippage vs whale entry (negative = allow price to have risen since entry).
-  // e.g. -0.15 means copy even if market moved 15 cents against us since whale entered.
-  MIN_EDGE_PCT: z.coerce.number().default(-0.15),
   // Hard cap: never enter if current ask exceeds this. Prevents copying already-priced-in moves.
   MAX_COPY_ASK: z.coerce.number().positive().max(1).default(0.85),
   MIN_POSITION_USDC: z.coerce.number().positive().default(10),
@@ -115,7 +112,6 @@ function loadConfig(): AppConfig {
     minWhaleRoi: env.MIN_WHALE_ROI,
     minWhaleTrades: env.MIN_WHALE_TRADES,
     minWhalePvalue: env.MIN_WHALE_PVALUE,
-    minEdgePct: env.MIN_EDGE_PCT,
     maxCopyAsk: env.MAX_COPY_ASK,
     minPositionUsdc: env.MIN_POSITION_USDC,
     logLevel: env.LOG_LEVEL,

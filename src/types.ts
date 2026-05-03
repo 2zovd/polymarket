@@ -147,7 +147,6 @@ export interface AppConfig {
   minWhaleRoi: number;
   minWhaleTrades: number;
   minWhalePvalue: number;
-  minEdgePct: number;
   maxCopyAsk: number;
   minPositionUsdc: number;
   logLevel: string;
