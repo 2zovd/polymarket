@@ -12,6 +12,7 @@ import {
 } from './collectors/wallets.js';
 import type { DbClient } from './db/index.js';
 import { walletStats } from './db/schema.js';
+import { vacuumDb } from './db/vacuum.js';
 
 export function startCron(
   gamma: GammaClient,
@@ -45,6 +46,8 @@ export function startCron(
     );
     childLog.info('Dune weekly discovery scheduled (Sun 03:00)');
   }
+  // Weekly on Sunday at 04:00 — prune stale rows and reclaim disk space
+  schedule('0 4 * * 0', () => runSafe('db-vacuum', () => vacuumDb(db, log)));
 
   childLog.info(
     'Cron scheduler started (markets/30min, trades/15min, positions/1h, wallets/6h, refresh/daily)',
