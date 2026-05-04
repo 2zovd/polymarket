@@ -70,6 +70,16 @@ const EnvSchema = z.object({
   // Minimum ratio currentAsk/whaleAvgPrice. Skip if market repriced heavily against the whale.
   // e.g. 0.5 = skip if current ask < 50% of whale's entry. 0 = disabled.
   MIN_WHALE_ASK_RATIO: z.coerce.number().nonnegative().max(1).default(0.5),
+  // Minimum edge (whaleAvgPrice - currentAsk) required to execute. Prevents entering on
+  // near-zero-edge positions where the whale's thesis has already been priced in.
+  MIN_EDGE: z.coerce.number().nonnegative().default(0.05),
+  // When true, only copy a whale's first entry into a market. Position-growth signals
+  // (whale adding to existing position) are ignored — by that point the market has
+  // typically already priced in the thesis.
+  FIRST_ENTRY_ONLY: z
+    .string()
+    .transform((v) => v.toLowerCase() === 'true')
+    .default('false'),
 });
 
 function loadConfig(): AppConfig {
@@ -127,6 +137,8 @@ function loadConfig(): AppConfig {
     maxPositionAgeHours: env.MAX_POSITION_AGE_HOURS,
     minAvgPositionUsdc: env.MIN_AVG_POSITION_USDC,
     minWhaleAskRatio: env.MIN_WHALE_ASK_RATIO,
+    minEdge: env.MIN_EDGE,
+    firstEntryOnly: env.FIRST_ENTRY_ONLY,
   };
 }
 

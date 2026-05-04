@@ -172,4 +172,11 @@ export interface AppConfig {
    * e.g. 0.5 = skip if market fell more than 50% from whale's entry. 0 = disabled.
    */
   minWhaleAskRatio: number;
+  /** Minimum edge (whaleAvgPrice - currentAsk) to enter. Filters near-zero-edge noise. */
+  minEdge: number;
+  /**
+   * When true, only signal on a whale's first entry into a market (prev snapshot absent).
+   * Skips position-growth triggers where the market has already partially priced in the thesis.
+   */
+  firstEntryOnly: boolean;
 }

@@ -33,7 +33,6 @@ export interface Signal {
 
 export async function generateSignal(
   position: WhalePosition,
-  walletScore: { pValue: number | null; roi: number | null; resolvedTrades: number },
   clob: ClobClientWrapper,
   db: DbClient,
   config: AppConfig,
@@ -155,6 +154,10 @@ export async function generateSignal(
   }
 
   const edge = position.avgPrice - currentAsk;
+
+  if (edge < config.minEdge) {
+    return skip(`edge_too_low: ${edge.toFixed(4)} < ${config.minEdge}`);
+  }
 
   const { size } = kellySize(position.avgPrice, currentAsk, config);
   if (size <= 0) {

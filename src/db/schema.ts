@@ -78,6 +78,8 @@ export const walletStats = sqliteTable('wallet_stats', {
   // true when p < 0.05 AND roi > 0 AND resolvedTrades >= 30 (ignores Brier — copy trading signal)
   isProfitable: integer('is_profitable', { mode: 'boolean' }).notNull().default(false),
   avgPositionSizeUsdc: real('avg_position_size_usdc'),
+  // totalTrades / resolvedTrades — values >10 indicate market-making bots, not directional traders
+  churnRatio: real('churn_ratio'),
   updatedAt: text('updated_at').notNull(),
 });
 

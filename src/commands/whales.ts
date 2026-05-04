@@ -5,7 +5,7 @@ import { createDataApiClient } from '../api/data.js';
 import { createDuneClient, extractAddresses } from '../api/dune.js';
 import { createGammaClient } from '../api/gamma.js';
 import { collectResolvedMarkets } from '../collectors/markets.js';
-import { collectWalletStats, seedWallets } from '../collectors/wallets.js';
+import { collectWalletStats, refreshStaleWallets, seedWallets } from '../collectors/wallets.js';
 import { createDb } from '../db/index.js';
 import { walletStats } from '../db/schema.js';
 import { config } from '../lib/config.js';
@@ -31,6 +31,8 @@ export function registerWhalesCommand(program: Command): void {
 
       logger.info('Scoring wallet activity...');
       await collectWalletStats(dataApi, db, logger);
+      logger.info('Refreshing stale wallets (Dune-discovered not in trades table)...');
+      await refreshStaleWallets(dataApi, db, logger);
     });
 
   whales
@@ -85,7 +87,7 @@ export function registerWhalesCommand(program: Command): void {
     .description('Show top wallets by ROI')
     .option('-n, --limit <n>', 'Number of wallets to show', '20')
     .option('--all', 'Show all scored wallets regardless of flags')
-    .option('--profitable', 'Show isProfitable wallets (p<0.05 AND roi>0, ignores Brier)')
+    .option('--profitable', 'Show isProfitable wallets (p<0.01, roi>0, non-market-maker)')
     .action(async (opts: { limit: string; all?: boolean; profitable?: boolean }) => {
       const db = createDb(config.databasePath);
       const limit = Number.parseInt(opts.limit, 10);
@@ -114,25 +116,26 @@ export function registerWhalesCommand(program: Command): void {
       }
 
       print(
-        `\n${'Wallet'.padEnd(44)} ${'ROI'.padStart(7)} ${'WinRate'.padStart(8)} ${'Brier'.padStart(6)} ${'p-val'.padStart(7)} ${'Trades'.padStart(6)} ${'Sharp'.padStart(6)} ${'Prof'.padStart(5)}`,
+        `\n${'Wallet'.padEnd(44)} ${'ROI'.padStart(7)} ${'WinRate'.padStart(8)} ${'Brier'.padStart(6)} ${'p-val'.padStart(7)} ${'Trades'.padStart(6)} ${'Churn'.padStart(6)} ${'Sharp'.padStart(6)}`,
       );
-      print('─'.repeat(97));
+      print('─'.repeat(103));
 
       for (const r of rows) {
         const roi = r.roi !== null ? `${(r.roi * 100).toFixed(1)}%` : 'n/a';
         const wr = r.winRate !== null ? `${(r.winRate * 100).toFixed(1)}%` : 'n/a';
         const brier = r.brierScore !== null ? r.brierScore.toFixed(3) : 'n/a';
         const pval = r.pValue !== null ? r.pValue.toFixed(3) : 'n/a';
+        const churn = r.churnRatio !== null ? r.churnRatio.toFixed(1) : 'n/a';
+        const mmFlag = r.churnRatio !== null && r.churnRatio > 10 ? '⚠' : ' ';
         const sharp = r.isSharp ? '  ✓' : '  -';
-        const prof = r.isProfitable ? '  ✓' : '  -';
         print(
-          `${r.walletAddress.padEnd(44)} ${roi.padStart(7)} ${wr.padStart(8)} ${brier.padStart(6)} ${pval.padStart(7)} ${String(r.resolvedTrades).padStart(6)} ${sharp.padStart(6)} ${prof.padStart(5)}`,
+          `${r.walletAddress.padEnd(44)} ${roi.padStart(7)} ${wr.padStart(8)} ${brier.padStart(6)} ${pval.padStart(7)} ${String(r.resolvedTrades).padStart(6)} ${(mmFlag + churn).padStart(6)} ${sharp.padStart(6)}`,
         );
       }
 
       const sharpCount = rows.filter((r) => r.isSharp).length;
-      const profCount = rows.filter((r) => r.isProfitable).length;
-      print(`\n${rows.length} wallets shown — sharp: ${sharpCount}, profitable: ${profCount}`);
+      const mmCount = rows.filter((r) => r.churnRatio !== null && r.churnRatio > 10).length;
+      print(`\n${rows.length} wallets shown — sharp: ${sharpCount}, market-makers filtered: ${mmCount}`);
     });
 
   whales
@@ -183,6 +186,9 @@ export function registerWhalesCommand(program: Command): void {
       print(`ROI:             ${row.roi !== null ? `${(row.roi * 100).toFixed(1)}%` : 'n/a'}`);
       print(`Brier score:     ${row.brierScore !== null ? row.brierScore.toFixed(4) : 'n/a'}`);
       print(`p-value:         ${row.pValue !== null ? row.pValue.toFixed(4) : 'n/a'}`);
+      const churnStr = row.churnRatio !== null ? row.churnRatio.toFixed(1) : 'n/a';
+      const mmNote = row.churnRatio !== null && row.churnRatio > 10 ? ' ⚠ market-maker detected' : '';
+      print(`Churn ratio:     ${churnStr}${mmNote}`);
       print(`Sharp:           ${row.isSharp ? 'YES' : 'no'}`);
       print(`Profitable:      ${row.isProfitable ? 'YES' : 'no'}`);
       print(`Last scored:     ${row.updatedAt}`);

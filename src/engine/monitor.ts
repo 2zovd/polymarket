@@ -19,6 +19,12 @@ let streamCursor: number = Math.floor(Date.now() / 1000) - 120;
 // both cycles overlap and read openTokenIds from DB before the first order is committed.
 const sessionTokenGuard = new Set<string>();
 
+// Concurrency guards: prevent overlapping cycle executions when a cycle takes longer than
+// its interval. Without these, a slow monitor cycle + fast stream tick can run scanWhale
+// for the same whale concurrently, defeating the sessionTokenGuard.
+let streamCycleRunning = false;
+let monitorCycleRunning = false;
+
 async function loadWhaleWallets(db: DbClient, config: AppConfig) {
   const baseConditions = and(
     eq(walletStats.isSharp, true),
@@ -198,6 +204,7 @@ async function scanWhale(
   const newPositions = positions.filter((pos) => {
     const prev = prevSnapshot.get(pos.tokenId);
     if (prev === undefined) return true;
+    if (config.firstEntryOnly) return false;
     return pos.size > prev.size * 1.2 && pos.size - prev.size >= config.minPositionUsdc;
   });
 
@@ -246,7 +253,6 @@ async function scanWhale(
 
       const signal = await generateSignal(
         pos,
-        { pValue: whale.pValue, roi: whale.roi, resolvedTrades: whale.resolvedTrades },
         clob,
         db,
         config,
@@ -419,17 +425,31 @@ export async function startMonitor(
   // Stream loop: lightweight, runs frequently.
   const streamMs = config.streamIntervalSeconds * 1000;
   const streamTimer = setInterval(() => {
-    runStreamCycle(dataApi, clob, db, log, config).catch((err) =>
-      log.error({ err }, 'Stream cycle unhandled error'),
-    );
+    if (streamCycleRunning) {
+      log.debug('Stream cycle still running — skipping tick');
+      return;
+    }
+    streamCycleRunning = true;
+    runStreamCycle(dataApi, clob, db, log, config)
+      .catch((err) => log.error({ err }, 'Stream cycle unhandled error'))
+      .finally(() => {
+        streamCycleRunning = false;
+      });
   }, streamMs);
 
   // Full snapshot loop: heavier, runs every monitorIntervalSeconds.
   const fullMs = config.monitorIntervalSeconds * 1000;
   const fullTimer = setInterval(() => {
-    runMonitorCycle(dataApi, clob, db, log, config).catch((err) =>
-      log.error({ err }, 'Monitor cycle unhandled error'),
-    );
+    if (monitorCycleRunning) {
+      log.debug('Monitor cycle still running — skipping tick');
+      return;
+    }
+    monitorCycleRunning = true;
+    runMonitorCycle(dataApi, clob, db, log, config)
+      .catch((err) => log.error({ err }, 'Monitor cycle unhandled error'))
+      .finally(() => {
+        monitorCycleRunning = false;
+      });
   }, fullMs);
 
   // Graceful shutdown — let PM2 / process signals clean up timers.

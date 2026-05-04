@@ -3,14 +3,19 @@ import type { DataApiActivity } from '../api/data.js';
 
 // Minimum resolved trades required to compute statistically meaningful scores.
 const MIN_RESOLVED = 30;
-// Sharp wallet thresholds (per plan).
+// Sharp wallet thresholds.
 const SHARP_ROI = 0.05;
 const SHARP_BRIER = 0.22;
 const SHARP_P_VALUE = 0.01;
+// Market-maker detection: if totalTrades / resolvedTrades exceeds this, the wallet
+// is cycling positions too fast to be a directional trader (spread capture, not edge).
+const MAX_CHURN_RATIO = 10;
 
 export interface WalletScore {
   totalTrades: number;
   resolvedTrades: number;
+  /** totalTrades / resolvedTrades — high values (>10) indicate market-making bots. */
+  churnRatio: number | null;
   winRate: number | null;
   roi: number | null;
   brierScore: number | null;
@@ -51,6 +56,7 @@ export function scoreWallet(
     return {
       totalTrades,
       resolvedTrades: scorable.length,
+      churnRatio: scorable.length > 0 ? totalTrades / scorable.length : null,
       winRate: null,
       roi: null,
       brierScore: null,
@@ -84,10 +90,13 @@ export function scoreWallet(
   }
 
   const resolvedTrades = roiPerTrade.length;
+  const churnRatio = resolvedTrades > 0 ? totalTrades / resolvedTrades : null;
+
   if (resolvedTrades < MIN_RESOLVED) {
     return {
       totalTrades,
       resolvedTrades,
+      churnRatio,
       winRate: null,
       roi: null,
       brierScore: null,
@@ -107,19 +116,26 @@ export function scoreWallet(
     mean(roiPerTrade) / (sampleStandardDeviation(roiPerTrade) / Math.sqrt(resolvedTrades));
   const pValue = 2 * (1 - cumulativeStdNormalProbability(Math.abs(tStat)));
 
+  // Market-maker gate: high churn means the wallet cycles positions too fast
+  // to have genuine directional edge — spread capture masquerading as alpha.
+  const isMarketMaker = churnRatio !== null && churnRatio > MAX_CHURN_RATIO;
+
   const isSharp =
+    !isMarketMaker &&
     pValue < SHARP_P_VALUE &&
     roi > SHARP_ROI &&
     brierScore < SHARP_BRIER &&
     resolvedTrades >= MIN_RESOLVED;
 
-  const isProfitable = pValue < SHARP_P_VALUE && roi > 0 && resolvedTrades >= MIN_RESOLVED;
+  const isProfitable =
+    !isMarketMaker && pValue < SHARP_P_VALUE && roi > 0 && resolvedTrades >= MIN_RESOLVED;
 
   const avgPositionSizeUsdc = totalCapital > 0 ? totalCapital / resolvedTrades : null;
 
   return {
     totalTrades,
     resolvedTrades,
+    churnRatio,
     winRate,
     roi,
     brierScore,

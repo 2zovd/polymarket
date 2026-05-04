@@ -1,0 +1,1 @@
+ALTER TABLE `wallet_stats` ADD `churn_ratio` real;
