@@ -1,8 +1,8 @@
-import { sql } from 'drizzle-orm';
+import { eq, sql } from 'drizzle-orm';
 import type { Logger } from 'pino';
 import type { GammaClient } from '../api/gamma.js';
 import type { DbClient } from '../db/index.js';
-import { markets } from '../db/schema.js';
+import { markets, openPositions } from '../db/schema.js';
 import type { MarketStatus } from '../types.js';
 
 // Fetches active markets from Gamma API and bulk-upserts them into the markets table.
@@ -10,11 +10,11 @@ import type { MarketStatus } from '../types.js';
 
 const PAGE_SIZE = 500;
 
-// better-sqlite3 executes synchronously on the main thread even behind async/await —
-// resolved promises only yield to the microtask queue, not the macrotask queue where
-// node-cron timers live. setImmediate explicitly yields to the macrotask queue.
+// better-sqlite3 executes synchronously on the main thread even behind async/await.
+// setTimeout(0) yields to the timers phase of the next event loop tick, giving other
+// scheduled callbacks (setTimeout-based schedulers, etc.) a chance to run between chunks.
 function yieldToEventLoop(): Promise<void> {
-  return new Promise((resolve) => setImmediate(resolve));
+  return new Promise((resolve) => setTimeout(resolve, 0));
 }
 
 function deriveStatus(active: boolean, closed: boolean): MarketStatus {
@@ -23,7 +23,7 @@ function deriveStatus(active: boolean, closed: boolean): MarketStatus {
   return 'resolved';
 }
 
-async function upsertMarketPage(
+export async function upsertMarketPage(
   db: DbClient,
   page: import('../types.js').Market[],
   now: string,
@@ -76,22 +76,22 @@ async function upsertMarketPage(
       .values(rows.slice(i, i + CHUNK))
       .onConflictDoUpdate({
         target: markets.conditionId,
+        // Drizzle's SQLite onConflictDoUpdate.set treats bare column references as
+        // self-references (SET col = col), not excluded.col. All mutable fields must
+        // use sql`excluded.*` to actually pick up the incoming row's values.
         set: {
-          question: markets.question,
-          // event_slug and accepting_orders require sql`excluded.*` because Drizzle's
-          // SQLite insert builder does not translate column references to excluded.* in
-          // onConflictDoUpdate.set — it keeps them as self-references instead.
+          question: sql`excluded.question`,
           eventSlug: sql`excluded.event_slug`,
           acceptingOrders: sql`excluded.accepting_orders`,
-          status: markets.status,
-          endDateIso: markets.endDateIso,
-          volumeNum: markets.volumeNum,
-          liquidityNum: markets.liquidityNum,
-          active: markets.active,
-          closed: markets.closed,
-          outcomePrices: markets.outcomePrices,
-          outcomes: markets.outcomes,
-          updatedAt: markets.updatedAt,
+          status: sql`excluded.status`,
+          endDateIso: sql`excluded.end_date_iso`,
+          volumeNum: sql`excluded.volume_num`,
+          liquidityNum: sql`excluded.liquidity_num`,
+          active: sql`excluded.active`,
+          closed: sql`excluded.closed`,
+          outcomePrices: sql`excluded.outcome_prices`,
+          outcomes: sql`excluded.outcomes`,
+          updatedAt: sql`excluded.updated_at`,
         },
       });
     await yieldToEventLoop();
@@ -116,6 +116,61 @@ export async function collectMarkets(gamma: GammaClient, db: DbClient, log: Logg
   }
 
   childLog.info({ totalUpserted }, 'Market collection complete');
+}
+
+/**
+ * Force-refreshes Gamma market state for every currently open position.
+ * Runs after the main market collector so that markets which transitioned from
+ * active→closed/resolved (and therefore dropped out of the active-only feed) get
+ * their DB rows updated. Without this, resolveOpenPositions() in monitor.ts would
+ * never mark them won/lost because it guards on market.active === false.
+ */
+export async function refreshOpenPositionMarkets(
+  gamma: GammaClient,
+  db: DbClient,
+  log: Logger,
+): Promise<void> {
+  const childLog = log.child({ collector: 'open-position-markets' });
+
+  // Join to get slug — Gamma's conditionId query has a fuzzy-match bug that returns
+  // unrelated markets. Slug-based lookup is reliable for both active and closed markets.
+  const rows = db
+    .select({ conditionId: openPositions.conditionId, slug: markets.slug })
+    .from(openPositions)
+    .leftJoin(markets, eq(openPositions.conditionId, markets.conditionId))
+    .where(eq(openPositions.status, 'open'))
+    .all();
+
+  if (rows.length === 0) return;
+
+  const marketMap = new Map(rows.map((r) => [r.conditionId, r.slug]));
+  childLog.info({ count: marketMap.size }, 'Refreshing markets for open positions');
+
+  const now = new Date().toISOString();
+  let refreshed = 0;
+
+  for (const [conditionId, slug] of marketMap) {
+    try {
+      let results: import('../types.js').Market[] = [];
+      if (slug) {
+        // Closed markets are only returned when closed=true is explicitly passed.
+        results = await gamma.getMarkets({ slug, closed: true });
+        if (results.length === 0) {
+          results = await gamma.getMarkets({ slug });
+        }
+      }
+      if (results.length === 0) {
+        childLog.warn({ conditionId: conditionId.slice(0, 10) }, 'Market not found in Gamma');
+        continue;
+      }
+      await upsertMarketPage(db, results.slice(0, 1), now);
+      refreshed++;
+    } catch (err) {
+      childLog.warn({ conditionId: conditionId.slice(0, 10), err }, 'Market refresh failed');
+    }
+  }
+
+  childLog.info({ refreshed }, 'Open position market refresh complete');
 }
 
 // Fetches recently closed markets (newest-first) to populate outcomePrices for wallet scoring.

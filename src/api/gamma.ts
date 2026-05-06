@@ -44,6 +44,7 @@ export function createGammaClient(config: AppConfig, log: Logger) {
       offset?: number;
       active?: boolean;
       closed?: boolean;
+      slug?: string;
       tag?: string;
       order?: string;
       ascending?: boolean;
@@ -56,15 +57,14 @@ export function createGammaClient(config: AppConfig, log: Logger) {
 
     async getMarket(slugOrConditionId: string): Promise<Market> {
       childLog.debug({ slugOrConditionId }, 'Fetching market');
-      // Condition IDs are 0x-prefixed hex — use path param.
-      // Slugs must be passed as query param (?slug=) — /markets/<slug> returns 422.
-      if (slugOrConditionId.startsWith('0x')) {
-        const { data } = await http.get<Market>(`/markets/${slugOrConditionId}`);
-        return data;
-      }
-      const { data } = await http.get<Market[]>('/markets', { params: { slug: slugOrConditionId } });
+      // Both conditionIds (0x-prefixed hex) and slugs use the query-param form.
+      // The path-param form (/markets/{id}) expects Gamma's internal numeric ID, not conditionId.
+      const param = slugOrConditionId.startsWith('0x')
+        ? { conditionId: slugOrConditionId }
+        : { slug: slugOrConditionId };
+      const { data } = await http.get<Market[]>('/markets', { params: param });
       const market = data[0];
-      if (!market) throw new Error(`No market found for slug: ${slugOrConditionId}`);
+      if (!market) throw new Error(`No market found for: ${slugOrConditionId}`);
       return market;
     },
 

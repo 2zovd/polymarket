@@ -1,8 +1,11 @@
-import { schedule } from 'node-cron';
 import type { Logger } from 'pino';
 import type { DataApiClient } from './api/data.js';
 import type { GammaClient } from './api/gamma.js';
-import { collectMarkets, collectResolvedMarkets } from './collectors/markets.js';
+import {
+  collectMarkets,
+  collectResolvedMarkets,
+  refreshOpenPositionMarkets,
+} from './collectors/markets.js';
 import { collectPositions } from './collectors/positions.js';
 import { collectTrades } from './collectors/trades.js';
 import {
@@ -14,6 +17,31 @@ import type { DbClient } from './db/index.js';
 import { walletStats } from './db/schema.js';
 import { vacuumDb } from './db/vacuum.js';
 
+/**
+ * Runs `fn` in a loop, waiting `max(5s, intervalMs - runtime)` between iterations.
+ * Unlike node-cron's fixed-clock model, this never reports "missed executions" —
+ * the next tick simply starts after the previous one finishes plus the remaining wait.
+ * Errors are caught and logged so the loop never terminates on failure.
+ */
+async function runRepeating(
+  name: string,
+  intervalMs: number,
+  fn: () => Promise<void>,
+  log: Logger,
+): Promise<void> {
+  for (;;) {
+    const start = Date.now();
+    try {
+      await fn();
+    } catch (err) {
+      log.error({ name, err }, 'Collector failed');
+    }
+    const elapsed = Date.now() - start;
+    const wait = Math.max(5_000, intervalMs - elapsed);
+    await new Promise<void>((resolve) => setTimeout(resolve, wait));
+  }
+}
+
 export function startCron(
   gamma: GammaClient,
   dataApi: DataApiClient,
@@ -23,50 +51,75 @@ export function startCron(
 ): void {
   const childLog = log.child({ module: 'cron' });
 
-  function runSafe(name: string, fn: () => Promise<void>): void {
-    fn().catch((err) => childLog.error({ name, err }, 'Collector failed'));
-  }
+  void (async () => {
+    // Sequential init — run heavy collectors one at a time to avoid SQLite contention.
+    childLog.info('Running initial data collection (sequential)');
 
-  schedule('*/30 * * * *', () => runSafe('markets', () => collectMarkets(gamma, db, log)));
-  schedule('*/15 * * * *', () => runSafe('trades', () => collectTrades(dataApi, db, log)));
-  schedule('0 * * * *', () => runSafe('positions', () => collectPositions(dataApi, db, log)));
-  // Resolved market outcomes + wallet scoring every 6 hours
-  schedule('0 */6 * * *', () =>
-    runSafe('resolved-markets', () => collectResolvedMarkets(gamma, db, log)),
-  );
-  schedule('30 */6 * * *', () => runSafe('wallets', () => collectWalletStats(dataApi, db, log)));
-  // Daily at 02:00 — re-score wallets not updated in 7+ days (keeps Dune-seeded wallets fresh)
-  schedule('0 2 * * *', () =>
-    runSafe('wallets-refresh', () => refreshStaleWallets(dataApi, db, log)),
-  );
-  // Weekly on Sunday at 03:00 — pull new top wallets from Dune and seed them
-  if (duneApiKey) {
-    schedule('0 3 * * 0', () =>
-      runSafe('wallets-dune', () => collectDuneWallets(duneApiKey, dataApi, db, log)),
+    try {
+      await collectMarkets(gamma, db, childLog);
+    } catch (err) {
+      childLog.error({ name: 'markets:init', err }, 'Collector failed');
+    }
+
+    try {
+      await refreshOpenPositionMarkets(gamma, db, childLog);
+    } catch (err) {
+      childLog.error({ name: 'open-position-markets:init', err }, 'Collector failed');
+    }
+
+    try {
+      await collectTrades(dataApi, db, childLog);
+    } catch (err) {
+      childLog.error({ name: 'trades:init', err }, 'Collector failed');
+    }
+
+    try {
+      await collectPositions(dataApi, db, childLog);
+    } catch (err) {
+      childLog.error({ name: 'positions:init', err }, 'Collector failed');
+    }
+
+    // Bootstrap resolved markets + wallet scoring if no profitable wallets exist yet (fresh DB).
+    const profitableCount = db
+      .select()
+      .from(walletStats)
+      .all()
+      .filter((w) => w.isProfitable).length;
+    if (profitableCount === 0) {
+      childLog.info('No profitable wallets — running initial resolved-markets + wallet scoring');
+      try {
+        await collectResolvedMarkets(gamma, db, childLog);
+      } catch (err) {
+        childLog.error({ name: 'resolved-markets:init', err }, 'Collector failed');
+      }
+      try {
+        await collectWalletStats(dataApi, db, childLog);
+      } catch (err) {
+        childLog.error({ name: 'wallets:init', err }, 'Collector failed');
+      }
+    }
+
+    childLog.info(
+      'Initial collection complete — starting scheduled loops',
     );
-    childLog.info('Dune weekly discovery scheduled (Sun 03:00)');
-  }
-  // Weekly on Sunday at 04:00 — prune stale rows and reclaim disk space
-  schedule('0 4 * * 0', () => runSafe('db-vacuum', () => vacuumDb(db, log)));
 
-  childLog.info(
-    'Cron scheduler started (markets/30min, trades/15min, positions/1h, wallets/6h, refresh/daily)',
-  );
+    // Recurring loops — each runs independently; next tick starts after completion + wait.
+    void runRepeating('markets', 30 * 60_000, () => collectMarkets(gamma, db, childLog), childLog);
+    void runRepeating('open-position-markets', 30 * 60_000, () => refreshOpenPositionMarkets(gamma, db, childLog), childLog);
+    void runRepeating('trades', 15 * 60_000, () => collectTrades(dataApi, db, childLog), childLog);
+    void runRepeating('positions', 60 * 60_000, () => collectPositions(dataApi, db, childLog), childLog);
+    void runRepeating('resolved-markets', 6 * 60 * 60_000, () => collectResolvedMarkets(gamma, db, childLog), childLog);
+    void runRepeating('wallets', 6 * 60 * 60_000, () => collectWalletStats(dataApi, db, childLog), childLog);
+    void runRepeating('wallets-refresh', 24 * 60 * 60_000, () => refreshStaleWallets(dataApi, db, childLog), childLog);
+    void runRepeating('db-vacuum', 7 * 24 * 60 * 60_000, () => vacuumDb(db, childLog), childLog);
 
-  runSafe('markets:init', () => collectMarkets(gamma, db, log));
-  runSafe('trades:init', () => collectTrades(dataApi, db, log));
-  runSafe('positions:init', () => collectPositions(dataApi, db, log));
+    if (duneApiKey) {
+      void runRepeating('wallets-dune', 7 * 24 * 60 * 60_000, () => collectDuneWallets(duneApiKey, dataApi, db, childLog), childLog);
+      childLog.info('Dune weekly discovery scheduled');
+    }
 
-  // Bootstrap resolved markets + wallet scoring if no profitable wallets exist yet (fresh DB).
-  const profitableCount = db
-    .select()
-    .from(walletStats)
-    .all()
-    .filter((w) => w.isProfitable).length;
-  if (profitableCount === 0) {
-    childLog.info('No profitable wallets — running initial resolved-markets + wallet scoring');
-    runSafe('resolved-markets:init', () =>
-      collectResolvedMarkets(gamma, db, log).then(() => collectWalletStats(dataApi, db, log)),
+    childLog.info(
+      'Cron scheduler started (markets/30min, open-markets/30min, trades/15min, positions/1h, wallets/6h, refresh/daily, vacuum/weekly)',
     );
-  }
+  })();
 }

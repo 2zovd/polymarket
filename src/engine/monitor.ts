@@ -112,7 +112,7 @@ async function resolveOpenPositions(db: DbClient, log: Logger): Promise<void> {
   for (const pos of open) {
     const market = await db
       .select({
-        active: markets.active,
+        closed: markets.closed,
         outcomePrices: markets.outcomePrices,
         outcomes: markets.outcomes,
       })
@@ -120,7 +120,8 @@ async function resolveOpenPositions(db: DbClient, log: Logger): Promise<void> {
       .where(eq(markets.conditionId, pos.conditionId))
       .get();
 
-    if (!market || market.active || !market.outcomePrices) continue;
+    // Gamma reports resolved markets as active:true, closed:true — guard on closed, not active.
+    if (!market || !market.closed || !market.outcomePrices) continue;
 
     let prices: number[];
     try {

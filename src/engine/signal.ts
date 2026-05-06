@@ -119,8 +119,12 @@ export async function generateSignal(
     const bestAsk = book.asks[0];
     if (!bestAsk) return skip('no_liquidity');
     currentAsk = Number.parseFloat(bestAsk.price);
-  } catch {
-    return skip('orderbook_fetch_failed');
+  } catch (err: unknown) {
+    // 404 means the CLOB orderbook was removed after market resolution — expected once
+    // our DB catches up (refreshOpenPositionMarkets will flip market.active to false).
+    // Any other status is an unexpected fetch failure worth distinguishing in metrics.
+    const status = (err as { status?: number } | null)?.status;
+    return skip(status === 404 ? 'market_resolved_no_orderbook' : 'orderbook_fetch_failed');
   }
 
   // Hard cap: don't copy if the market has already mostly priced in the whale's thesis.
