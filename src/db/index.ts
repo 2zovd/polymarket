@@ -30,6 +30,28 @@ function runMigrations(sqlite: InstanceType<typeof Database>): void {
   if (!mCols.includes('accepting_orders')) {
     sqlite.exec('ALTER TABLE markets ADD COLUMN accepting_orders INTEGER NOT NULL DEFAULT 1');
   }
+
+  // Partial unique index: prevent double-entry into the same token while a position is open.
+  // Uses SQLite partial index (WHERE status = 'open') so resolved positions don't block re-entry
+  // if the same market ever reopens or a new position is taken after resolution.
+  const indexes = (
+    sqlite.pragma('index_list(open_positions)') as Array<{ name: string }>
+  ).map((i) => i.name);
+  if (!indexes.includes('open_positions_token_id_open_unique')) {
+    // Remove duplicate open entries before creating the unique index — keep only the row
+    // with the highest id (most recent) per token_id to preserve the latest signal linkage.
+    sqlite.exec(
+      `DELETE FROM open_positions
+       WHERE status = 'open'
+         AND id NOT IN (
+           SELECT MAX(id) FROM open_positions WHERE status = 'open' GROUP BY token_id
+         )`,
+    );
+    sqlite.exec(
+      `CREATE UNIQUE INDEX open_positions_token_id_open_unique
+       ON open_positions(token_id) WHERE status = 'open'`,
+    );
+  }
 }
 
 export function createDb(databasePath: string) {

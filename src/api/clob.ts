@@ -220,5 +220,46 @@ export function createClobClient(config: AppConfig, log: Logger) {
       await authedClient.cancelOrder({ orderID: orderId });
       childLog.info({ orderId }, 'Order cancelled');
     },
+
+    /**
+     * Search open orders for a recently placed order matching the given params.
+     * Used for phantom-order reconciliation: when createAndPostOrder succeeds
+     * server-side but the client never receives the orderID (e.g. network timeout).
+     *
+     * Matches on tokenId, price, size, and a recency window (default 30s).
+     * Returns the orderID if found, null otherwise.
+     */
+    async findRecentOrder(
+      tokenId: string,
+      price: number,
+      size: number,
+      windowSec = 30,
+    ): Promise<string | null> {
+      requireCreds();
+      try {
+        const response = await authedClient.getOpenOrders();
+        const orders = Array.isArray(response) ? response : ((response as { data?: unknown[] }).data ?? []);
+        const cutoff = Date.now() / 1000 - windowSec;
+
+        for (const o of orders as Array<Record<string, unknown>>) {
+          const oTokenId = String(o.asset_id ?? o.tokenID ?? '');
+          const oPrice = Number(o.price ?? 0);
+          const oSize = Number(o.original_size ?? o.size ?? 0);
+          const oCreated = Number(o.created_at ?? 0);
+
+          if (
+            oTokenId === tokenId &&
+            Math.abs(oPrice - price) < 0.0001 &&
+            Math.abs(oSize - size) < 0.01 &&
+            oCreated >= cutoff
+          ) {
+            return String(o.id ?? o.orderID ?? '');
+          }
+        }
+        return null;
+      } catch {
+        return null;
+      }
+    },
   };
 }

@@ -43,6 +43,43 @@ async function insertSignal(
   return rows[0].id;
 }
 
+async function insertOpenPosition(
+  db: DbClient,
+  log: Logger,
+  signalId: number,
+  signal: Signal,
+  trackedSize: number,
+  orderId: string | null,
+  now: string,
+  isDryRun: boolean,
+): Promise<boolean> {
+  try {
+    await db.insert(openPositions).values({
+      signalId,
+      tokenId: signal.tokenId,
+      conditionId: signal.conditionId,
+      outcome: signal.outcome,
+      size: trackedSize,
+      entryPrice: signal.currentAsk,
+      entryAt: now,
+      isDryRun,
+      status: 'open',
+    });
+    return true;
+  } catch (err) {
+    // UNIQUE constraint on (token_id) for open positions — duplicate entry blocked.
+    const msg = err instanceof Error ? err.message : String(err);
+    if (msg.toLowerCase().includes('unique')) {
+      log.warn(
+        { tokenId: signal.tokenId.slice(0, 12), orderId, signalId },
+        'duplicate_position_blocked: open position for this token already exists',
+      );
+      return false;
+    }
+    throw err;
+  }
+}
+
 export async function executeSignal(
   signal: Signal,
   clob: ClobClientWrapper,
@@ -98,25 +135,51 @@ export async function executeSignal(
   } catch (err) {
     const error = err instanceof Error ? err.message : String(err);
     childLog.error({ err }, 'Order placement failed');
-    result = { orderId: null, executedSize: 0, status: 'error', error };
+
+    // Phantom-order reconciliation: the order may have landed on the CLOB despite
+    // the client-side error (e.g. network timeout after server accepted the order).
+    // Check open orders within a 30-second window to recover the real orderId.
+    if (!config.dryRun) {
+      childLog.info(
+        { tokenId: signal.tokenId.slice(0, 12) },
+        'Checking open orders for phantom order recovery',
+      );
+      // Small delay to allow the CLOB to register the order before querying.
+      await new Promise((r) => setTimeout(r, 2500));
+      const recoveredId = await clob.findRecentOrder(
+        signal.tokenId,
+        signal.currentAsk,
+        signal.kellySize,
+      );
+      if (recoveredId) {
+        childLog.warn(
+          { recoveredOrderId: recoveredId },
+          'Phantom order recovered — marking as executed',
+        );
+        result = { orderId: recoveredId, executedSize: signal.kellySize, status: 'executed' };
+      } else {
+        result = { orderId: null, executedSize: 0, status: 'error', error };
+      }
+    } else {
+      result = { orderId: null, executedSize: 0, status: 'error', error };
+    }
   }
 
   const signalId = await insertSignal(db, signal, result, config, now);
 
   if (result.status === 'executed' || result.status === 'dry-run') {
-    // Use kellySize for dry-run (simulated exposure), executedSize for live
+    // Use kellySize for dry-run (simulated exposure), executedSize for live.
     const trackedSize = result.status === 'executed' ? result.executedSize : signal.kellySize;
-    await db.insert(openPositions).values({
+    await insertOpenPosition(
+      db,
+      childLog,
       signalId,
-      tokenId: signal.tokenId,
-      conditionId: signal.conditionId,
-      outcome: signal.outcome,
-      size: trackedSize,
-      entryPrice: signal.currentAsk,
-      entryAt: now,
-      isDryRun: config.dryRun,
-      status: 'open',
-    });
+      signal,
+      trackedSize,
+      result.orderId,
+      now,
+      config.dryRun,
+    );
 
     await sendSignalAlert(signal, result, config);
   }

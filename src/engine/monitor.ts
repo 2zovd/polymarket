@@ -165,10 +165,16 @@ async function resolveOpenPositions(db: DbClient, log: Logger): Promise<void> {
   }
 }
 
+interface ScanStats {
+  fresh: number;
+  ready: number;
+  skipped: Record<string, number>;
+}
+
 /**
  * Scan a single whale: fetch current positions, diff against snapshot,
  * generate and execute signals for new or significantly grown positions.
- * Returns the set of tokenIds that were processed (for openTokenIds sync).
+ * Mutates `stats` with per-signal outcomes for cycle-level aggregation.
  */
 async function scanWhale(
   whale: {
@@ -183,6 +189,7 @@ async function scanWhale(
   log: Logger,
   config: AppConfig,
   openTokenIds: Set<string>,
+  stats: ScanStats,
 ): Promise<void> {
   const rawPositions: DataApiPosition[] = await dataApi.getWalletPositions(whale.walletAddress);
   const now = new Date().toISOString();
@@ -234,6 +241,7 @@ async function scanWhale(
   }
 
   if (freshPositions.length > 0) {
+    stats.fresh += freshPositions.length;
     log.info(
       { wallet: whale.walletAddress.slice(0, 10), freshPositions: freshPositions.length },
       'New positions detected',
@@ -260,10 +268,23 @@ async function scanWhale(
       );
 
       if (signal.status !== 'ready') {
+        const reason = signal.skipReason ?? 'unknown';
+        stats.skipped[reason] = (stats.skipped[reason] ?? 0) + 1;
+        log.info(
+          {
+            wallet: whale.walletAddress.slice(0, 10),
+            tokenId: pos.tokenId.slice(0, 12),
+            reason,
+            whaleAvgPrice: pos.avgPrice,
+          },
+          'Signal skipped',
+        );
         // Signal filtered out — release session guard so future cycles can re-evaluate.
         sessionTokenGuard.delete(pos.tokenId);
         continue;
       }
+
+      stats.ready += 1;
 
       // Signal passed all quality gates — now reserve in openTokenIds so subsequent
       // whales in this cycle don't double-enter the same token.
@@ -315,15 +336,17 @@ export async function runMonitorCycle(
     'Monitor cycle started',
   );
 
+  const stats: ScanStats = { fresh: 0, ready: 0, skipped: {} };
+
   for (const whale of whales) {
     try {
-      await scanWhale(whale, dataApi, clob, db, childLog, config, openTokenIds);
+      await scanWhale(whale, dataApi, clob, db, childLog, config, openTokenIds, stats);
     } catch (err) {
       log.warn({ wallet: whale.walletAddress.slice(0, 10), err }, 'Monitor: wallet scan failed');
     }
   }
 
-  childLog.info('Monitor cycle complete');
+  childLog.info({ whales: whales.length, ...stats }, 'Monitor cycle complete');
 }
 
 /**
@@ -383,14 +406,20 @@ export async function runStreamCycle(
     return;
   }
 
+  const stats: ScanStats = { fresh: 0, ready: 0, skipped: {} };
+
   for (const address of activeAddresses) {
     const whale = whaleMap.get(address);
     if (!whale) continue;
     try {
-      await scanWhale(whale, dataApi, clob, db, childLog, config, openTokenIds);
+      await scanWhale(whale, dataApi, clob, db, childLog, config, openTokenIds, stats);
     } catch (err) {
       childLog.warn({ wallet: address.slice(0, 10), err }, 'Stream: wallet scan failed');
     }
+  }
+
+  if (stats.fresh > 0) {
+    childLog.info({ active: activeAddresses.size, ...stats }, 'Stream cycle complete');
   }
 }
 
