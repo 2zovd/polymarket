@@ -86,6 +86,8 @@ export default defineEventHandler((event) => {
        JOIN wallet_stats ws ON ws.wallet_address = wp.wallet_address
        JOIN markets m ON m.condition_id = wp.condition_id
        WHERE m.accepting_orders = 1
+         AND m.active = 1
+         AND m.closed = 0
          AND (ws.is_sharp = 1 OR ws.is_profitable = 1)
          AND ws.resolved_trades >= ? ${filterClause}`,
     )
