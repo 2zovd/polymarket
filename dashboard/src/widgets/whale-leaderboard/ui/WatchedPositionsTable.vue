@@ -22,6 +22,15 @@ function isVeryStale(dateStr: string | null | undefined): boolean {
   if (!dateStr) return false
   return (Date.now() - new Date(dateStr).getTime()) > 7 * 24 * 3_600_000
 }
+
+function isEffectivelyResolved(outcomePrices: string | null | undefined): boolean {
+  if (!outcomePrices) return false
+  try {
+    return (JSON.parse(outcomePrices) as string[]).map(Number).some((p) => p <= 0.02 || p >= 0.98)
+  } catch {
+    return false
+  }
+}
 </script>
 
 <template>
@@ -55,7 +64,7 @@ function isVeryStale(dateStr: string | null | undefined): boolean {
           v-for="p in displayed"
           v-else
           :key="p.token_id"
-          :class="['border-b border-gray-800/50 hover:bg-gray-800/20 transition-opacity', isVeryStale(p.updated_at) ? 'opacity-50' : '']"
+          :class="['border-b border-gray-800/50 hover:bg-gray-800/20 transition-opacity', isVeryStale(p.updated_at) || isEffectivelyResolved(p.outcome_prices) ? 'opacity-40' : '']"
         >
           <td class="py-2 pr-4 max-w-xs">
             <MarketLink v-if="p.question" :question="p.question" :event-slug="p.event_slug" :max-len="50" />
