@@ -1,4 +1,4 @@
-import { inArray, sql } from 'drizzle-orm';
+import { and, inArray, notLike, sql } from 'drizzle-orm';
 import type { Logger } from 'pino';
 import {
   type ResolvedMarketMap,
@@ -85,7 +85,12 @@ export async function seedWallets(
   const resolvedRows = await db
     .select({ conditionId: markets.conditionId, outcomePrices: markets.outcomePrices })
     .from(markets)
-    .where(inArray(markets.status, ['resolved', 'closed']));
+    .where(
+      and(
+        inArray(markets.status, ['resolved', 'closed']),
+        notLike(markets.question, '%Up or Down%'),
+      ),
+    );
 
   const resolvedMap = buildResolvedMarketMap(resolvedRows);
   childLog.info(
@@ -119,12 +124,18 @@ export async function collectWalletStats(
 ): Promise<void> {
   const childLog = log.child({ collector: 'wallets' });
 
-  // Build resolved market lookup from DB — these are the markets where we can score predictions.
+  // Build resolved market lookup from DB — excludes "Up or Down" micro-markets (5-min crypto
+  // direction bets) which inflate trade counts but cannot be copied at 15-second granularity.
   const resolvedRows = await db
     .select({ conditionId: markets.conditionId, outcomePrices: markets.outcomePrices })
     .from(markets)
     // 'closed' = trading closed (outcomePrices populated); 'resolved' = fully settled
-    .where(inArray(markets.status, ['resolved', 'closed']));
+    .where(
+      and(
+        inArray(markets.status, ['resolved', 'closed']),
+        notLike(markets.question, '%Up or Down%'),
+      ),
+    );
 
   const resolvedMap = buildResolvedMarketMap(resolvedRows);
   childLog.info({ resolvedMarkets: Object.keys(resolvedMap).length }, 'Resolved market map built');
@@ -210,7 +221,12 @@ export async function refreshStaleWallets(
   const resolvedRows = await db
     .select({ conditionId: markets.conditionId, outcomePrices: markets.outcomePrices })
     .from(markets)
-    .where(inArray(markets.status, ['resolved', 'closed']));
+    .where(
+      and(
+        inArray(markets.status, ['resolved', 'closed']),
+        notLike(markets.question, '%Up or Down%'),
+      ),
+    );
 
   const resolvedMap = buildResolvedMarketMap(resolvedRows);
   const now = new Date().toISOString();

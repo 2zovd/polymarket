@@ -79,6 +79,13 @@ export async function generateSignal(
     return skip('market_not_active');
   }
 
+  // "Up or Down" markets are 5-minute binary crypto direction bets.
+  // They cannot be copied: by the time a trade appears in the 15-second stream,
+  // the ask has already moved to 0.99 or there is <1 minute left.
+  if (/up or down/i.test(market.question)) {
+    return skip('micro_market_up_or_down');
+  }
+
   // Active != accepting_orders. The CLOB rejects new orders during the close-out window
   // even while the market is still flagged active. Skipping here avoids surfacing the
   // failure deep in the executor.

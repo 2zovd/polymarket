@@ -179,4 +179,12 @@ export interface AppConfig {
    * Skips position-growth triggers where the market has already partially priced in the thesis.
    */
   firstEntryOnly: boolean;
+  /** Also track is_profitable wallets (not just is_sharp) that meet looser thresholds. */
+  includeProfitableWhales: boolean;
+  /** Minimum ROI for is_profitable (non-sharp) whales. Higher than minWhaleRoi. */
+  minProfitableRoi: number;
+  /** Minimum resolved trades for is_profitable (non-sharp) whales. */
+  minProfitableTrades: number;
+  /** Minimum average position size (USDC) for is_profitable (non-sharp) whales. 0 = disabled. */
+  minProfitableAvgPos: number;
 }

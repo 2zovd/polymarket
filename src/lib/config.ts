@@ -41,7 +41,7 @@ const EnvSchema = z.object({
   MONITOR_INTERVAL_SECONDS: z.coerce.number().int().positive().default(300),
   PORTFOLIO_SIZE: z.coerce.number().positive().default(1000),
   KELLY_CAP: z.coerce.number().positive().max(1).default(0.25),
-  MIN_WHALE_ROI: z.coerce.number().default(0.02),
+  MIN_WHALE_ROI: z.coerce.number().default(0.05),
   MIN_WHALE_TRADES: z.coerce.number().int().positive().default(30),
   MIN_WHALE_PVALUE: z.coerce.number().positive().max(1).default(0.05),
   // Hard cap: never enter if current ask exceeds this. Prevents copying already-priced-in moves.
@@ -80,6 +80,16 @@ const EnvSchema = z.object({
     .string()
     .transform((v) => v.toLowerCase() === 'true')
     .default('false'),
+  // ─── Profitable Whale Expansion ──────────────────────────────────────────────
+  // Also track is_profitable (not just is_sharp) wallets with high enough ROI.
+  // Catches strong traders blocked from sharp only by Brier calibration threshold.
+  INCLUDE_PROFITABLE_WHALES: z
+    .string()
+    .transform((v) => v.toLowerCase() === 'true')
+    .default('false'),
+  MIN_PROFITABLE_ROI: z.coerce.number().nonnegative().default(0.15),
+  MIN_PROFITABLE_TRADES: z.coerce.number().int().positive().default(50),
+  MIN_PROFITABLE_AVG_POS: z.coerce.number().nonnegative().default(0),
 });
 
 function loadConfig(): AppConfig {
@@ -139,6 +149,10 @@ function loadConfig(): AppConfig {
     minWhaleAskRatio: env.MIN_WHALE_ASK_RATIO,
     minEdge: env.MIN_EDGE,
     firstEntryOnly: env.FIRST_ENTRY_ONLY,
+    includeProfitableWhales: env.INCLUDE_PROFITABLE_WHALES,
+    minProfitableRoi: env.MIN_PROFITABLE_ROI,
+    minProfitableTrades: env.MIN_PROFITABLE_TRADES,
+    minProfitableAvgPos: env.MIN_PROFITABLE_AVG_POS,
   };
 }
 

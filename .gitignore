@@ -35,6 +35,9 @@ Thumbs.db
 *.swp
 *~
 
+# Claude Code local state
+.claude/
+
 # Python
 __pycache__/
 *.py[cod]

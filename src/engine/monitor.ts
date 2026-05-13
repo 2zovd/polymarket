@@ -26,24 +26,50 @@ let streamCycleRunning = false;
 let monitorCycleRunning = false;
 
 async function loadWhaleWallets(db: DbClient, config: AppConfig) {
-  const baseConditions = and(
+  // Sharp tier: statistically significant edge (p<0.01, brier<0.22, roi > minWhaleRoi).
+  const sharpConditions = and(
     eq(walletStats.isSharp, true),
     gt(walletStats.resolvedTrades, config.minWhaleTrades),
     gte(walletStats.roi, config.minWhaleRoi),
   );
 
-  const conditions =
+  const sharpWithAvg =
     config.minAvgPositionUsdc > 0
       ? and(
-          baseConditions,
+          sharpConditions,
           or(
             isNull(walletStats.avgPositionSizeUsdc),
             gte(walletStats.avgPositionSizeUsdc, config.minAvgPositionUsdc),
           ),
         )
-      : baseConditions;
+      : sharpConditions;
 
-  return db.select().from(walletStats).where(conditions).all();
+  const sharpRows = await db.select().from(walletStats).where(sharpWithAvg).all();
+
+  if (!config.includeProfitableWhales) return sharpRows;
+
+  // Profitable tier: profitable but blocked from sharp (typically by Brier > 0.22).
+  // Requires higher ROI and position size to compensate for lower calibration confidence.
+  const profitableConditions = and(
+    eq(walletStats.isProfitable, true),
+    eq(walletStats.isSharp, false),
+    gt(walletStats.resolvedTrades, config.minProfitableTrades),
+    gte(walletStats.roi, config.minProfitableRoi),
+  );
+
+  const profitableWithAvg =
+    config.minProfitableAvgPos > 0
+      ? and(
+          profitableConditions,
+          gte(walletStats.avgPositionSizeUsdc, config.minProfitableAvgPos),
+        )
+      : profitableConditions;
+
+  const profitableRows = await db.select().from(walletStats).where(profitableWithAvg).all();
+
+  // Merge, deduplicate by walletAddress.
+  const seen = new Set(sharpRows.map((r) => r.walletAddress));
+  return [...sharpRows, ...profitableRows.filter((r) => !seen.has(r.walletAddress))];
 }
 
 async function getPreviousSnapshot(
@@ -243,6 +269,7 @@ async function scanWhale(
 
   if (freshPositions.length > 0) {
     stats.fresh += freshPositions.length;
+
     log.info(
       { wallet: whale.walletAddress.slice(0, 10), freshPositions: freshPositions.length },
       'New positions detected',
@@ -351,10 +378,19 @@ export async function runMonitorCycle(
 }
 
 /**
- * Fast detection layer: polls the global trade stream every ~60 seconds.
- * Identifies which profitable whales traded recently, then immediately
- * scans only those wallets instead of all 72 — reducing latency from
- * 5 minutes to ~60 seconds while cutting API calls by ~80%.
+ * Fast detection layer: polls the global trade stream every ~15 seconds.
+ *
+ * Two complementary detection paths:
+ *
+ * PATH A — Trade-based (new, faster):
+ *   Reacts directly to whale BUY trades in the stream. Skips the position-fetch
+ *   entirely, cutting latency from ~30s to ~5s. The trade price replaces whaleAvgPrice
+ *   as the probability proxy. Catches short-lived markets (5–15 min) before ask moves.
+ *
+ * PATH B — Position-based (existing, fallback):
+ *   For active whale wallets not yet handled by PATH A, fetches the full position
+ *   snapshot and diffs against watchedPositions. Catches position growth and markets
+ *   where the whale's trade didn't appear in this stream window.
  */
 export async function runStreamCycle(
   dataApi: DataApiClient,
@@ -383,14 +419,11 @@ export async function runStreamCycle(
   // Advance cursor so next call only fetches newer trades.
   streamCursor = Math.max(...trades.map((t) => t.timestamp));
 
-  const activeAddresses = new Set(
-    trades.filter((t) => whaleMap.has(t.proxyWallet)).map((t) => t.proxyWallet),
-  );
-
-  if (activeAddresses.size === 0) return;
+  const whaleTrades = trades.filter((t) => whaleMap.has(t.proxyWallet));
+  if (whaleTrades.length === 0) return;
 
   childLog.info(
-    { active: activeAddresses.size, tradesScanned: trades.length },
+    { active: new Set(whaleTrades.map((t) => t.proxyWallet)).size, tradesScanned: trades.length },
     'Whales detected in trade stream',
   );
 
@@ -409,6 +442,70 @@ export async function runStreamCycle(
 
   const stats: ScanStats = { fresh: 0, ready: 0, skipped: {} };
 
+  // ── PATH A: Trade-based direct signals ──────────────────────────────────────
+  // For each whale BUY trade in this stream window, attempt a signal immediately.
+  // Use the trade's own price as whaleAvgPrice so edge reflects the CURRENT opportunity,
+  // not an outdated position average.
+  // Deduplicate by tokenId — take the most recent BUY trade per token.
+  const buyTradeByToken = new Map<string, (typeof whaleTrades)[0]>();
+  for (const t of whaleTrades) {
+    if (t.side !== 'BUY') continue;
+    const existing = buyTradeByToken.get(t.asset);
+    if (!existing || t.timestamp > existing.timestamp) {
+      buyTradeByToken.set(t.asset, t);
+    }
+  }
+
+  const tradeSources = new Set<string>(); // tokenIds handled via PATH A
+
+  for (const [tokenId, trade] of buyTradeByToken) {
+    if (openTokenIds.size >= config.maxOpenPositions) break;
+    if (sessionTokenGuard.has(tokenId)) continue;
+
+    sessionTokenGuard.add(tokenId);
+    tradeSources.add(tokenId);
+    stats.fresh += 1;
+
+    const usdcSize = trade.size * trade.price;
+    const position: WhalePosition = {
+      walletAddress: trade.proxyWallet,
+      tokenId: trade.asset,
+      conditionId: trade.conditionId,
+      outcome: trade.outcome ?? '',
+      size: trade.size,
+      avgPrice: trade.price,
+      initialValue: usdcSize,
+    };
+
+    const signal = await generateSignal(position, clob, db, config, openTokenIds);
+
+    if (signal.status !== 'ready') {
+      const reason = signal.skipReason ?? 'unknown';
+      stats.skipped[reason] = (stats.skipped[reason] ?? 0) + 1;
+      childLog.info(
+        { wallet: trade.proxyWallet.slice(0, 10), tokenId: tokenId.slice(0, 12), reason, tradePrice: trade.price },
+        'Trade signal skipped',
+      );
+      sessionTokenGuard.delete(tokenId);
+      continue;
+    }
+
+    stats.ready += 1;
+    openTokenIds.add(tokenId);
+
+    const execResult = await executeSignal(signal, clob, db, childLog, config);
+    if (execResult.status !== 'executed' && execResult.status !== 'dry-run') {
+      sessionTokenGuard.delete(tokenId);
+      openTokenIds.delete(tokenId);
+    }
+  }
+
+  // ── PATH B: Position-based fallback for active wallets ─────────────────────
+  // For wallets that traded recently but whose BUY trades were already handled
+  // (or were SELL trades), run the position-diff scan to catch any positions
+  // not visible in the current stream window.
+  const activeAddresses = new Set(whaleTrades.map((t) => t.proxyWallet));
+
   for (const address of activeAddresses) {
     const whale = whaleMap.get(address);
     if (!whale) continue;
@@ -419,9 +516,10 @@ export async function runStreamCycle(
     }
   }
 
-  if (stats.fresh > 0) {
-    childLog.info({ active: activeAddresses.size, ...stats }, 'Stream cycle complete');
-  }
+  childLog.info(
+    { active: activeAddresses.size, tradePath: tradeSources.size, ...stats },
+    'Stream cycle complete',
+  );
 }
 
 export async function startMonitor(
