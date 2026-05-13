@@ -42,33 +42,53 @@ function sortIcon(key: string): string {
           <th class="pb-2 pr-4 font-medium">Whale</th>
           <template v-if="!mini">
             <th class="pb-2 pr-4 font-medium text-right">
-              <button class="inline-flex items-center gap-1 hover:text-gray-300" @click="emit('sort', 'win_rate')">
-                Win%
-                <UIcon :name="sortIcon('win_rate')" class="w-3 h-3" />
-              </button>
+              <UTooltip text="Win rate on resolved trades">
+                <button class="inline-flex items-center gap-1 hover:text-gray-300" @click="emit('sort', 'win_rate')">
+                  Win%
+                  <UIcon :name="sortIcon('win_rate')" class="w-3 h-3" />
+                </button>
+              </UTooltip>
             </th>
             <th class="pb-2 pr-4 font-medium text-right">
-              <button class="inline-flex items-center gap-1 hover:text-gray-300" @click="emit('sort', 'roi')">
-                ROI
-                <UIcon :name="sortIcon('roi')" class="w-3 h-3" />
-              </button>
+              <UTooltip text="Return on investment (resolved trades)">
+                <button class="inline-flex items-center gap-1 hover:text-gray-300" @click="emit('sort', 'roi')">
+                  ROI
+                  <UIcon :name="sortIcon('roi')" class="w-3 h-3" />
+                </button>
+              </UTooltip>
             </th>
             <th class="pb-2 pr-4 font-medium text-right">
-              <button class="inline-flex items-center gap-1 hover:text-gray-300" @click="emit('sort', 'brier')">
-                Brier
-                <UIcon :name="sortIcon('brier')" class="w-3 h-3" />
-              </button>
+              <UTooltip text="Calibration score — lower is better (0.25 = random)">
+                <button class="inline-flex items-center gap-1 hover:text-gray-300" @click="emit('sort', 'brier')">
+                  Brier
+                  <UIcon :name="sortIcon('brier')" class="w-3 h-3" />
+                </button>
+              </UTooltip>
             </th>
           </template>
-          <th class="pb-2 pr-4 font-medium text-right">Entry</th>
-          <th class="pb-2 pr-4 font-medium text-right">Now</th>
-          <th class="pb-2 pr-4 font-medium text-right">Drift</th>
+          <th class="pb-2 pr-4 font-medium text-right">
+            <UTooltip text="Whale's average entry price">
+              <span>Entry</span>
+            </UTooltip>
+          </th>
+          <th class="pb-2 pr-4 font-medium text-right">
+            <UTooltip text="Current market price for this outcome">
+              <span>Now</span>
+            </UTooltip>
+          </th>
+          <th class="pb-2 pr-4 font-medium text-right">
+            <UTooltip text="Price move since whale entered">
+              <span>Drift</span>
+            </UTooltip>
+          </th>
           <th class="pb-2 font-medium text-right">
-            <button v-if="!mini" class="inline-flex items-center gap-1 hover:text-gray-300" @click="emit('sort', 'score')">
-              Score
-              <UIcon :name="sortIcon('score')" class="w-3 h-3" />
-            </button>
-            <span v-else>Score</span>
+            <UTooltip text="Quality score: A ≥ 80, B ≥ 60, C ≥ 40, D < 40">
+              <button v-if="!mini" class="inline-flex items-center gap-1 hover:text-gray-300" @click="emit('sort', 'score')">
+                Score
+                <UIcon :name="sortIcon('score')" class="w-3 h-3" />
+              </button>
+              <span v-else>Score</span>
+            </UTooltip>
           </th>
         </tr>
       </thead>

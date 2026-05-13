@@ -18,19 +18,15 @@ function sortIcon(key: string) {
   return props.order === 'desc' ? 'i-heroicons-arrow-down' : 'i-heroicons-arrow-up'
 }
 
-function th(key: string, label: string, align = 'right') {
-  return { key, label, align }
-}
-
 const cols = [
-  { key: 'wallet_address', label: 'Wallet', align: 'left', sortable: false },
-  { key: 'roi', label: 'ROI', align: 'right', sortable: true },
-  { key: 'win_rate', label: 'Win Rate', align: 'right', sortable: true },
-  { key: 'resolved_trades', label: 'Resolved', align: 'right', sortable: true },
-  { key: 'brier_score', label: 'Brier', align: 'right', sortable: true },
-  { key: 'avg_position_size_usdc', label: 'Avg Size', align: 'right', sortable: false },
-  { key: 'watched_count', label: 'Positions', align: 'right', sortable: false },
-  { key: 'badges', label: '', align: 'right', sortable: false },
+  { key: 'wallet_address', label: 'Wallet', align: 'left', sortable: false, tooltip: '' },
+  { key: 'roi', label: 'ROI', align: 'right', sortable: true, tooltip: 'Return on investment (resolved trades)' },
+  { key: 'win_rate', label: 'Win Rate', align: 'right', sortable: true, tooltip: '% of resolved trades called correctly' },
+  { key: 'resolved_trades', label: 'Resolved', align: 'right', sortable: true, tooltip: 'Number of settled trades used for stats' },
+  { key: 'brier_score', label: 'Brier', align: 'right', sortable: true, tooltip: 'Calibration score — lower is better (0.25 = random)' },
+  { key: 'avg_position_size_usdc', label: 'Avg Size', align: 'right', sortable: false, tooltip: 'Average position size in USDC' },
+  { key: 'watched_count', label: 'Positions', align: 'right', sortable: false, tooltip: 'Current tracked open positions' },
+  { key: 'badges', label: '', align: 'right', sortable: false, tooltip: '' },
 ]
 </script>
 
@@ -45,14 +41,18 @@ const cols = [
             class="pb-2 pr-4 font-medium"
             :class="col.align === 'right' ? 'text-right' : ''"
           >
-            <button
-              v-if="col.sortable"
-              class="inline-flex items-center gap-1 hover:text-gray-300"
-              @click="emit('sort', col.key)"
-            >
-              {{ col.label }}
-              <UIcon :name="sortIcon(col.key)" class="w-3 h-3" />
-            </button>
+            <UTooltip v-if="col.sortable" :text="col.tooltip">
+              <button
+                class="inline-flex items-center gap-1 hover:text-gray-300"
+                @click="emit('sort', col.key)"
+              >
+                {{ col.label }}
+                <UIcon :name="sortIcon(col.key)" class="w-3 h-3" />
+              </button>
+            </UTooltip>
+            <UTooltip v-else-if="col.tooltip" :text="col.tooltip">
+              <span>{{ col.label }}</span>
+            </UTooltip>
             <span v-else>{{ col.label }}</span>
           </th>
         </tr>
