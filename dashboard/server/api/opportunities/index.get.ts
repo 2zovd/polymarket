@@ -63,6 +63,7 @@ export default defineEventHandler((event) => {
   const sort = (query.sort as string) || 'score'
   const filter = (query.filter as string) || 'all'
   const minTrades = Math.max(0, Number(query.minTrades) || 5)
+  const horizon = (query.horizon as string) || 'all'
 
   const db = getDb()
 
@@ -72,6 +73,13 @@ export default defineEventHandler((event) => {
       : filter === 'profitable'
         ? 'AND ws.is_profitable = 1'
         : ''
+
+  const horizonClause =
+    horizon === '1d' ? `AND m.end_date_iso <= datetime('now', '+1 day')`
+    : horizon === '3d' ? `AND m.end_date_iso <= datetime('now', '+3 days')`
+    : horizon === '7d' ? `AND m.end_date_iso <= datetime('now', '+7 days')`
+    : horizon === '30d' ? `AND m.end_date_iso <= datetime('now', '+30 days')`
+    : ''
 
   const rows = db
     .prepare(
@@ -90,7 +98,7 @@ export default defineEventHandler((event) => {
          AND m.closed = 0
          AND (m.end_date_iso IS NULL OR m.end_date_iso > datetime('now'))
          AND (ws.is_sharp = 1 OR ws.is_profitable = 1)
-         AND ws.resolved_trades >= ? ${filterClause}`,
+         AND ws.resolved_trades >= ? ${filterClause} ${horizonClause}`,
     )
     .all(minTrades) as RawRow[]
 

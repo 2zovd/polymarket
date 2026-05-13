@@ -10,7 +10,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{ (e: 'sort', key: string): void }>()
 
-const colSpan = computed(() => (props.mini ? 7 : 10))
+const colSpan = computed(() => (props.mini ? 7 : 11))
 
 function driftClass(drift: number | null): string {
   if (drift == null) return 'text-gray-400'
@@ -81,6 +81,11 @@ function sortIcon(key: string): string {
               <span>Drift</span>
             </UTooltip>
           </th>
+          <th v-if="!mini" class="pb-2 pr-4 font-medium text-right">
+            <UTooltip text="When the market resolves">
+              <span>Ends</span>
+            </UTooltip>
+          </th>
           <th class="pb-2 font-medium text-right">
             <UTooltip text="Quality score: A ≥ 80, B ≥ 60, C ≥ 40, D < 40">
               <button v-if="!mini" class="inline-flex items-center gap-1 hover:text-gray-300" @click="emit('sort', 'score')">
@@ -131,6 +136,9 @@ function sortIcon(key: string): string {
           </td>
           <td class="py-2 pr-4 text-right font-mono" :class="driftClass(r.drift)">
             {{ r.drift != null ? (r.drift > 0 ? '+' : '') + (r.drift * 100).toFixed(1) + '¢' : '—' }}
+          </td>
+          <td v-if="!mini" class="py-2 pr-4 text-right font-mono text-xs" :class="endsInClass(r.end_date_iso)">
+            {{ formatEndsIn(r.end_date_iso) }}
           </td>
           <td class="py-2 text-right">
             <span

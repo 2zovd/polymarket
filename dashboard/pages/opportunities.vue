@@ -7,6 +7,7 @@ const page = ref(1)
 const sort = ref('score')
 const filter = ref('all')
 const minTrades = ref(5)
+const horizon = ref('all')
 
 const { data, pending, refresh } = useFetch('/api/opportunities', {
   query: computed(() => ({
@@ -14,11 +15,12 @@ const { data, pending, refresh } = useFetch('/api/opportunities', {
     sort: sort.value,
     filter: filter.value,
     minTrades: minTrades.value,
+    horizon: horizon.value,
   })),
   server: false,
 })
 
-watch([sort, filter, minTrades], () => {
+watch([sort, filter, minTrades, horizon], () => {
   page.value = 1
 })
 
@@ -45,6 +47,21 @@ onMounted(() => {
               :color="filter === f.value ? 'primary' : 'gray'"
               @click="filter = f.value"
             >{{ f.label }}</UButton>
+          </div>
+
+          <!-- Ends within -->
+          <div class="flex items-center gap-2">
+            <span class="text-xs text-gray-400">Ends in:</span>
+            <div class="flex gap-1">
+              <UButton
+                v-for="h in [{ label: 'Any', value: 'all' }, { label: '1d', value: '1d' }, { label: '3d', value: '3d' }, { label: '7d', value: '7d' }, { label: '30d', value: '30d' }]"
+                :key="h.value"
+                size="xs"
+                :variant="horizon === h.value ? 'solid' : 'ghost'"
+                :color="horizon === h.value ? 'primary' : 'gray'"
+                @click="horizon = h.value"
+              >{{ h.label }}</UButton>
+            </div>
           </div>
 
           <!-- Min resolved trades -->

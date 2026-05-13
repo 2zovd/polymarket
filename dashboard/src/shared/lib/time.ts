@@ -27,3 +27,22 @@ export function isStale(iso: string | null | undefined, thresholdMinutes = 5): b
   if (!iso) return true
   return Date.now() - new Date(iso).getTime() > thresholdMinutes * 60_000
 }
+
+export function formatEndsIn(iso: string | null | undefined): string {
+  if (!iso) return '—'
+  const ms = new Date(iso.includes('T') ? iso : `${iso}T23:59:59Z`).getTime() - Date.now()
+  if (ms <= 0) return '—'
+  const hours = ms / 3_600_000
+  if (hours < 24) return `${Math.round(hours)}h`
+  const days = Math.ceil(hours / 24)
+  if (days <= 60) return `${days}d`
+  return new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+}
+
+export function endsInClass(iso: string | null | undefined): string {
+  if (!iso) return 'text-gray-500'
+  const days = (new Date(iso.includes('T') ? iso : `${iso}T23:59:59Z`).getTime() - Date.now()) / 86_400_000
+  if (days < 1) return 'text-red-400'
+  if (days < 7) return 'text-yellow-400'
+  return 'text-gray-400'
+}
