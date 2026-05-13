@@ -97,6 +97,7 @@ export default defineEventHandler((event) => {
          AND m.active = 1
          AND m.closed = 0
          AND (m.end_date_iso IS NULL OR m.end_date_iso > datetime('now'))
+         AND m.question NOT LIKE '%Up or Down%'
          AND (ws.is_sharp = 1 OR ws.is_profitable = 1)
          AND ws.resolved_trades >= ? ${filterClause} ${horizonClause}`,
     )
