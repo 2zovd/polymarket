@@ -47,11 +47,31 @@ function isEffectivelyResolved(outcomePrices: string | null | undefined): boolea
         <tr class="text-left text-xs text-gray-500 border-b border-gray-800">
           <th class="pb-2 pr-4 font-medium">Market</th>
           <th class="pb-2 pr-4 font-medium">Outcome</th>
-          <th class="pb-2 pr-4 font-medium text-right">Size</th>
-          <th class="pb-2 pr-4 font-medium text-right">Avg Price</th>
-          <th class="pb-2 pr-4 font-medium text-right">Exposure</th>
-          <th class="pb-2 pr-4 font-medium">Probability</th>
-          <th class="pb-2 font-medium">Seen</th>
+          <th class="pb-2 pr-4 font-medium text-right">
+            <UTooltip text="Shares held — each pays $1 if this outcome wins">
+              <span>Size</span>
+            </UTooltip>
+          </th>
+          <th class="pb-2 pr-4 font-medium text-right">
+            <UTooltip text="Average price paid per share">
+              <span>Avg Price</span>
+            </UTooltip>
+          </th>
+          <th class="pb-2 pr-4 font-medium text-right">
+            <UTooltip text="Total USDC at risk (Size × Avg Price)">
+              <span>Exposure</span>
+            </UTooltip>
+          </th>
+          <th class="pb-2 pr-4 font-medium">
+            <UTooltip text="Current market-implied probability for each outcome">
+              <span>Probability</span>
+            </UTooltip>
+          </th>
+          <th class="pb-2 font-medium">
+            <UTooltip text="When this position was last detected by the bot">
+              <span>Seen</span>
+            </UTooltip>
+          </th>
         </tr>
       </thead>
       <tbody>
