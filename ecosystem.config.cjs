@@ -1,8 +1,9 @@
-// PM2 process manager config for the copy trading monitor + data collectors.
+// PM2 process manager config for the copy trading monitor + data collectors + dashboard.
 // Run:  pm2 start ecosystem.config.cjs
 //       pm2 save && pm2 startup   (auto-restart on reboot)
 //       pm2 logs polymarket-monitor
 //       pm2 logs polymarket-cron
+//       pm2 logs polymarket-dashboard
 //       pm2 stop all
 module.exports = {
   apps: [
@@ -19,6 +20,8 @@ module.exports = {
       min_uptime: '10s',
       merge_logs: true,
       log_date_format: 'YYYY-MM-DD HH:mm:ss Z',
+      output: `${__dirname}/logs/bot.log`,
+      error: `${__dirname}/logs/bot.log`,
       env: {
         NODE_ENV: 'production',
       },
@@ -34,8 +37,29 @@ module.exports = {
       min_uptime: '10s',
       merge_logs: true,
       log_date_format: 'YYYY-MM-DD HH:mm:ss Z',
+      output: `${__dirname}/logs/bot-cron.log`,
+      error: `${__dirname}/logs/bot-cron.log`,
       env: {
         NODE_ENV: 'production',
+      },
+    },
+    {
+      name: 'polymarket-dashboard',
+      script: './dashboard/node_modules/.bin/nuxt',
+      args: 'preview',
+      cwd: `${__dirname}/dashboard`,
+      watch: false,
+      restart_delay: 5_000,
+      max_restarts: 10,
+      min_uptime: '10s',
+      merge_logs: true,
+      log_date_format: 'YYYY-MM-DD HH:mm:ss Z',
+      env: {
+        NODE_ENV: 'production',
+        PORT: '3001',
+        HOST: '127.0.0.1',
+        DB_PATH: `${__dirname}/data/polymarket.db`,
+        LOG_PATH: `${process.env.HOME}/.pm2/logs/polymarket-monitor-out.log`,
       },
     },
   ],
