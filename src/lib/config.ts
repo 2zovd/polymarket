@@ -90,6 +90,10 @@ const EnvSchema = z.object({
   MIN_PROFITABLE_ROI: z.coerce.number().nonnegative().default(0.15),
   MIN_PROFITABLE_TRADES: z.coerce.number().int().positive().default(50),
   MIN_PROFITABLE_AVG_POS: z.coerce.number().nonnegative().default(0),
+  // Skip whale wallets whose recent watched-positions are dominated by "Up or Down" micro-markets.
+  // Fraction 0–1; wallets with more than this ratio of micro positions (last 3 days, ≥10 positions)
+  // are excluded from the copy pipeline. 0 = disabled.
+  MAX_MICRO_POSITION_RATIO: z.coerce.number().nonnegative().max(1).default(0.7),
 });
 
 function loadConfig(): AppConfig {
@@ -153,6 +157,7 @@ function loadConfig(): AppConfig {
     minProfitableRoi: env.MIN_PROFITABLE_ROI,
     minProfitableTrades: env.MIN_PROFITABLE_TRADES,
     minProfitableAvgPos: env.MIN_PROFITABLE_AVG_POS,
+    maxMicroPositionRatio: env.MAX_MICRO_POSITION_RATIO,
   };
 }
 

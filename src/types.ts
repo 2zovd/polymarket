@@ -187,4 +187,11 @@ export interface AppConfig {
   minProfitableTrades: number;
   /** Minimum average position size (USDC) for is_profitable (non-sharp) whales. 0 = disabled. */
   minProfitableAvgPos: number;
+  /**
+   * Skip whale wallets whose recent positions are dominated by "Up or Down" micro-markets.
+   * Value is the max allowed fraction (0–1) of micro positions over the past 3 days.
+   * e.g. 0.7 = skip wallets where >70% of recent positions are Up or Down markets.
+   * 0 = disabled (no filter applied).
+   */
+  maxMicroPositionRatio: number;
 }

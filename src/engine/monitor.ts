@@ -1,4 +1,4 @@
-import { and, eq, gt, gte, isNull, or } from 'drizzle-orm';
+import { and, eq, gt, gte, isNull, or, sql } from 'drizzle-orm';
 import type { Logger } from 'pino';
 import type { ClobClientWrapper } from '../api/clob.js';
 import type { DataApiClient, DataApiPosition } from '../api/data.js';
@@ -25,7 +25,52 @@ const sessionTokenGuard = new Set<string>();
 let streamCycleRunning = false;
 let monitorCycleRunning = false;
 
-async function loadWhaleWallets(db: DbClient, config: AppConfig) {
+/**
+ * Returns wallet addresses where >maxRatio of their recent watched positions
+ * are "Up or Down" micro-markets. These wallets clog the pipeline with unfilterable
+ * noise and have no copyable non-micro activity.
+ *
+ * Only applies when maxRatio > 0 and the wallet has at least 10 recent positions.
+ */
+async function getMicroContaminatedWallets(
+  db: DbClient,
+  maxRatio: number,
+  log: Logger,
+): Promise<Set<string>> {
+  if (maxRatio <= 0) return new Set();
+
+  const cutoff = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString();
+
+  const rows = await db
+    .select({
+      walletAddress: watchedPositions.walletAddress,
+      total: sql<number>`COUNT(*)`,
+      microCount: sql<number>`SUM(CASE WHEN ${markets.question} LIKE '%Up or Down%' THEN 1 ELSE 0 END)`,
+    })
+    .from(watchedPositions)
+    .innerJoin(markets, eq(watchedPositions.conditionId, markets.conditionId))
+    .where(sql`${watchedPositions.updatedAt} >= ${cutoff}`)
+    .groupBy(watchedPositions.walletAddress)
+    .having(sql`COUNT(*) >= 10`)
+    .all();
+
+  const contaminated = new Set(
+    rows
+      .filter((r) => r.total > 0 && r.microCount / r.total > maxRatio)
+      .map((r) => r.walletAddress),
+  );
+
+  if (contaminated.size > 0) {
+    log.info(
+      { filtered: contaminated.size, threshold: maxRatio },
+      'Micro-market contaminated wallets excluded from copy pipeline',
+    );
+  }
+
+  return contaminated;
+}
+
+async function loadWhaleWallets(db: DbClient, config: AppConfig, log: Logger) {
   // Sharp tier: statistically significant edge (p<0.01, brier<0.22, roi > minWhaleRoi).
   const sharpConditions = and(
     eq(walletStats.isSharp, true),
@@ -69,7 +114,11 @@ async function loadWhaleWallets(db: DbClient, config: AppConfig) {
 
   // Merge, deduplicate by walletAddress.
   const seen = new Set(sharpRows.map((r) => r.walletAddress));
-  return [...sharpRows, ...profitableRows.filter((r) => !seen.has(r.walletAddress))];
+  const allRows = [...sharpRows, ...profitableRows.filter((r) => !seen.has(r.walletAddress))];
+
+  const contaminated = await getMicroContaminatedWallets(db, config.maxMicroPositionRatio, log);
+  if (contaminated.size === 0) return allRows;
+  return allRows.filter((r) => !contaminated.has(r.walletAddress));
 }
 
 async function getPreviousSnapshot(
@@ -358,7 +407,7 @@ export async function runMonitorCycle(
     return;
   }
 
-  const whales = await loadWhaleWallets(db, config);
+  const whales = await loadWhaleWallets(db, config, childLog);
   childLog.info(
     { whales: whales.length, openPositions: openTokenIds.size },
     'Monitor cycle started',
@@ -401,7 +450,7 @@ export async function runStreamCycle(
 ): Promise<void> {
   const childLog = log.child({ module: 'stream' });
 
-  const whales = await loadWhaleWallets(db, config);
+  const whales = await loadWhaleWallets(db, config, childLog);
   if (whales.length === 0) return;
 
   const whaleMap = new Map(whales.map((w) => [w.walletAddress, w]));
