@@ -94,6 +94,10 @@ const EnvSchema = z.object({
   // Fraction 0–1; wallets with more than this ratio of micro positions (last 3 days, ≥10 positions)
   // are excluded from the copy pipeline. 0 = disabled.
   MAX_MICRO_POSITION_RATIO: z.coerce.number().nonnegative().max(1).default(0.7),
+  // Maximum churn ratio allowed for tracked whale wallets. Churn = total trades / resolved trades.
+  // High churn (>3) with near-zero ROI indicates market makers, not directional traders.
+  // 0 = disabled.
+  MAX_CHURN_RATIO: z.coerce.number().nonnegative().default(2.5),
 });
 
 function loadConfig(): AppConfig {
@@ -158,6 +162,7 @@ function loadConfig(): AppConfig {
     minProfitableTrades: env.MIN_PROFITABLE_TRADES,
     minProfitableAvgPos: env.MIN_PROFITABLE_AVG_POS,
     maxMicroPositionRatio: env.MAX_MICRO_POSITION_RATIO,
+    maxChurnRatio: env.MAX_CHURN_RATIO,
   };
 }
 

@@ -49,17 +49,17 @@ async function upsertWalletScore(
       .onConflictDoUpdate({
         target: walletStats.walletAddress,
         set: {
-          totalTrades: walletStats.totalTrades,
-          resolvedTrades: walletStats.resolvedTrades,
-          winRate: walletStats.winRate,
-          roi: walletStats.roi,
-          brierScore: walletStats.brierScore,
-          pValue: walletStats.pValue,
-          isSharp: walletStats.isSharp,
-          isProfitable: walletStats.isProfitable,
-          avgPositionSizeUsdc: walletStats.avgPositionSizeUsdc,
-          churnRatio: walletStats.churnRatio,
-          updatedAt: walletStats.updatedAt,
+          totalTrades: sql`excluded.total_trades`,
+          resolvedTrades: sql`excluded.resolved_trades`,
+          winRate: sql`excluded.win_rate`,
+          roi: sql`excluded.roi`,
+          brierScore: sql`excluded.brier_score`,
+          pValue: sql`excluded.p_value`,
+          isSharp: sql`excluded.is_sharp`,
+          isProfitable: sql`excluded.is_profitable`,
+          avgPositionSizeUsdc: sql`excluded.avg_position_size_usdc`,
+          churnRatio: sql`excluded.churn_ratio`,
+          updatedAt: sql`excluded.updated_at`,
         },
       });
 

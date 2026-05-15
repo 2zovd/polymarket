@@ -194,4 +194,10 @@ export interface AppConfig {
    * 0 = disabled (no filter applied).
    */
   maxMicroPositionRatio: number;
+  /**
+   * Maximum churn ratio (total trades / resolved trades) for tracked whale wallets.
+   * High churn with near-zero ROI is the market-maker fingerprint — not a directional signal.
+   * 0 = disabled.
+   */
+  maxChurnRatio: number;
 }

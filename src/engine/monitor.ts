@@ -19,6 +19,11 @@ let streamCursor: number = Math.floor(Date.now() / 1000) - 120;
 // both cycles overlap and read openTokenIds from DB before the first order is committed.
 const sessionTokenGuard = new Set<string>();
 
+// Cache for getMicroContaminatedWallets — the JOIN over 20k+ rows is expensive to run every 15s.
+let microContaminatedCache: Set<string> = new Set();
+let microContaminatedCacheTs = 0;
+const MICRO_CACHE_TTL_MS = 5 * 60 * 1000;
+
 // Concurrency guards: prevent overlapping cycle executions when a cycle takes longer than
 // its interval. Without these, a slow monitor cycle + fast stream tick can run scanWhale
 // for the same whale concurrently, defeating the sessionTokenGuard.
@@ -39,7 +44,12 @@ async function getMicroContaminatedWallets(
 ): Promise<Set<string>> {
   if (maxRatio <= 0) return new Set();
 
-  const cutoff = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString();
+  const now = Date.now();
+  if (now - microContaminatedCacheTs < MICRO_CACHE_TTL_MS) {
+    return microContaminatedCache;
+  }
+
+  const cutoff = new Date(now - 3 * 24 * 60 * 60 * 1000).toISOString();
 
   const rows = await db
     .select({
@@ -60,12 +70,15 @@ async function getMicroContaminatedWallets(
       .map((r) => r.walletAddress),
   );
 
-  if (contaminated.size > 0) {
-    log.info(
+  if (contaminated.size !== microContaminatedCache.size) {
+    log.debug(
       { filtered: contaminated.size, threshold: maxRatio },
-      'Micro-market contaminated wallets excluded from copy pipeline',
+      'Micro-market contaminated wallets cache refreshed',
     );
   }
+
+  microContaminatedCache = contaminated;
+  microContaminatedCacheTs = now;
 
   return contaminated;
 }
@@ -114,7 +127,19 @@ async function loadWhaleWallets(db: DbClient, config: AppConfig, log: Logger) {
 
   // Merge, deduplicate by walletAddress.
   const seen = new Set(sharpRows.map((r) => r.walletAddress));
-  const allRows = [...sharpRows, ...profitableRows.filter((r) => !seen.has(r.walletAddress))];
+  let allRows = [...sharpRows, ...profitableRows.filter((r) => !seen.has(r.walletAddress))];
+
+  // Churn filter: high churn + near-zero ROI = market maker, not directional signal.
+  if (config.maxChurnRatio > 0) {
+    const before = allRows.length;
+    allRows = allRows.filter(
+      (r) => r.churnRatio == null || r.churnRatio <= config.maxChurnRatio,
+    );
+    const removed = before - allRows.length;
+    if (removed > 0) {
+      log.info({ removed, threshold: config.maxChurnRatio }, 'Market-maker wallets excluded by churn filter');
+    }
+  }
 
   const contaminated = await getMicroContaminatedWallets(db, config.maxMicroPositionRatio, log);
   if (contaminated.size === 0) return allRows;

@@ -1,7 +1,7 @@
-import { eq } from 'drizzle-orm';
+import { and, eq, ne } from 'drizzle-orm';
 import type { ClobClientWrapper } from '../api/clob.js';
 import type { DbClient } from '../db/index.js';
-import { markets } from '../db/schema.js';
+import { markets, watchedPositions } from '../db/schema.js';
 import type { AppConfig } from '../types.js';
 import { kellySize } from './sizer.js';
 
@@ -55,6 +55,23 @@ export async function generateSignal(
   // Risk control — skip if we already hold this token
   if (openTokenIds.has(position.tokenId)) {
     return skip('already_positioned');
+  }
+
+  // Skip if the whale is hedged on this market (holds an opposing outcome token for the same
+  // conditionId). A two-sided position is ambiguous — could be a market maker or a locked hedge.
+  const opposingLeg = await db
+    .select({ tokenId: watchedPositions.tokenId })
+    .from(watchedPositions)
+    .where(
+      and(
+        eq(watchedPositions.walletAddress, position.walletAddress),
+        eq(watchedPositions.conditionId, position.conditionId),
+        ne(watchedPositions.tokenId, position.tokenId),
+      ),
+    )
+    .get();
+  if (opposingLeg) {
+    return skip('whale_two_sided_position');
   }
 
   if (position.initialValue < config.minPositionUsdc) {
