@@ -1,4 +1,3 @@
-import { createEventStream } from 'h3'
 import { getDb } from '../../utils/db'
 
 interface LiveEventRow {
@@ -12,7 +11,7 @@ interface LiveEventRow {
   question: string | null
 }
 
-function fetchEvents(db: ReturnType<typeof getDb>, afterId: number, limit: number): LiveEventRow[] {
+function fetchAfter(db: ReturnType<typeof getDb>, afterId: number, limit: number): LiveEventRow[] {
   return db
     .prepare(
       `SELECT le.id, le.type, le.market_id, le.token_id, le.severity, le.data, le.detected_at,
@@ -41,11 +40,23 @@ function parseRow(row: LiveEventRow) {
   }
 }
 
-export default defineEventHandler(async (event) => {
-  const stream = createEventStream(event)
+export default defineEventHandler((event) => {
+  const res = event.node.res
+  const req = event.node.req
+
+  res.setHeader('Content-Type', 'text/event-stream; charset=utf-8')
+  res.setHeader('Cache-Control', 'no-cache, no-transform')
+  res.setHeader('Connection', 'keep-alive')
+  res.setHeader('X-Accel-Buffering', 'no')
+  res.flushHeaders()
+
   const db = getDb()
 
-  // Seed with last 50 events so the client has something to show immediately.
+  function write(data: string) {
+    res.write(`data: ${data}\n\n`)
+  }
+
+  // Seed with last 50 events in chronological order.
   const seedRows = db
     .prepare(
       `SELECT le.id, le.type, le.market_id, le.token_id, le.severity, le.data, le.detected_at,
@@ -57,24 +68,34 @@ export default defineEventHandler(async (event) => {
     )
     .all() as LiveEventRow[]
 
-  // Reverse so we emit oldest → newest (client prepends new items at top).
   seedRows.reverse()
 
   let lastId = 0
   for (const row of seedRows) {
-    await stream.push(JSON.stringify(parseRow(row)))
+    write(JSON.stringify(parseRow(row)))
     if (row.id > lastId) lastId = row.id
   }
 
-  const timer = setInterval(async () => {
-    const rows = fetchEvents(db, lastId, 100)
-    for (const row of rows) {
-      await stream.push(JSON.stringify(parseRow(row)))
-      if (row.id > lastId) lastId = row.id
-    }
-  }, 2000)
+  // Heartbeat every 15s to keep the connection alive through proxies.
+  const pingTimer = setInterval(() => { res.write(': ping\n\n') }, 15_000)
 
-  stream.onClosed(() => clearInterval(timer))
+  // Poll for new rows every 2s.
+  const pollTimer = setInterval(() => {
+    try {
+      const rows = fetchAfter(db, lastId, 100)
+      for (const row of rows) {
+        write(JSON.stringify(parseRow(row)))
+        if (row.id > lastId) lastId = row.id
+      }
+    } catch { /* DB may be briefly locked during WAL checkpoint */ }
+  }, 2_000)
 
-  return stream.send()
+  req.on('close', () => {
+    clearInterval(pingTimer)
+    clearInterval(pollTimer)
+    res.end()
+  })
+
+  // Return undefined so Nitro doesn't close the response.
+  return undefined
 })
