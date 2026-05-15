@@ -6,7 +6,7 @@ const totalPages = computed(() => Math.max(1, Math.ceil(props.total / props.page
 </script>
 
 <template>
-  <div class="flex items-center justify-between text-sm text-gray-400">
+  <div class="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 text-sm text-gray-400">
     <span>{{ (page - 1) * pageSize + 1 }}–{{ Math.min(page * pageSize, total) }} of {{ total }}</span>
     <UPagination
       :model-value="page"

@@ -9,7 +9,7 @@ defineEmits<{ (e: 'update:modelValue', v: string): void }>()
     placeholder="Search markets…"
     icon="i-heroicons-magnifying-glass"
     size="sm"
-    class="w-64"
+    class="w-full md:w-64"
     @update:model-value="$emit('update:modelValue', $event)"
   />
 </template>
