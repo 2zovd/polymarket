@@ -13,10 +13,21 @@ export interface MarketTradeEvent {
   condition_id: string;
 }
 
-export interface LastTradePriceEvent {
-  event_type: 'last_trade_price';
+export interface PriceChangeItem {
   asset_id: string;
   price: string;
+  size: string;
+  side: 'BUY' | 'SELL';
+  hash: string;
+  best_bid: string;
+  best_ask: string;
+}
+
+export interface PriceChangeEvent {
+  event_type: 'price_change';
+  market: string;
+  price_changes: PriceChangeItem[];
+  timestamp: string;
 }
 
 export interface BookLevel {
@@ -49,7 +60,7 @@ export interface SubscribedEvent {
 
 export type WsMarketEvent =
   | MarketTradeEvent
-  | LastTradePriceEvent
+  | PriceChangeEvent
   | BookEvent
   | MarketResolvedEvent
   | SubscribedEvent;
@@ -62,6 +73,6 @@ export function isBookEvent(e: WsMarketEvent): e is BookEvent {
   return e.event_type === 'book';
 }
 
-export function isPriceEvent(e: WsMarketEvent): e is LastTradePriceEvent {
-  return e.event_type === 'last_trade_price';
+export function isPriceEvent(e: WsMarketEvent): e is PriceChangeEvent {
+  return e.event_type === 'price_change';
 }

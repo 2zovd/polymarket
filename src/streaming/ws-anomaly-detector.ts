@@ -1,7 +1,7 @@
 import type { Logger } from 'pino';
 import type { DbClient } from '../db/index.js';
 import { liveEvents } from '../db/schema.js';
-import type { BookEvent, LastTradePriceEvent, MarketTradeEvent } from './types.js';
+import type { BookEvent, MarketTradeEvent, PriceChangeEvent } from './types.js';
 
 // Price must move at least this many percentage points within the window to be a spike.
 const PRICE_SPIKE_MIN_CHANGE = 0.07;
@@ -9,6 +9,9 @@ const PRICE_SPIKE_MIN_CHANGE = 0.07;
 const PRICE_SPIKE_WINDOW_MS = 5 * 60 * 1_000;
 // Don't re-fire a price spike alert for the same token within this window (ms).
 const PRICE_SPIKE_DEDUP_MS = 5 * 60 * 1_000;
+// Minimum elapsed time between the oldest and newest price point to qualify as a spike.
+// Guards against startup bursts where the server replays recent trades in rapid succession.
+const PRICE_SPIKE_MIN_WINDOW_MS = 30_000;
 // Total ask-side USDC across top levels below which we call a book "thin".
 const ORDERBOOK_THIN_THRESHOLD_USDC = 1_000;
 // Don't re-fire a thin-book alert for the same token within this window (ms).
@@ -70,15 +73,20 @@ export class WsAnomalyDetector {
     });
   }
 
-  onPriceChange(event: LastTradePriceEvent): void {
-    const price = Number.parseFloat(event.price);
+  onPriceChange(event: PriceChangeEvent): void {
+    const now = Date.now();
+    // event.market is the hex condition_id for all tokens in this batch.
+    const conditionId = event.market;
+    for (const item of event.price_changes) {
+      this.processPrice(item.asset_id, item.price, conditionId, now);
+    }
+  }
+
+  private processPrice(tokenId: string, rawPrice: string, conditionId: string, now: number): void {
+    const price = Number.parseFloat(rawPrice);
     if (!Number.isFinite(price) || price <= 0) return;
 
-    const tokenId = event.asset_id;
-    const now = Date.now();
     const cutoff = now - PRICE_SPIKE_WINDOW_MS;
-
-    // Append and prune old points.
     const history = this.priceHistory.get(tokenId) ?? [];
     history.push({ price, ts: now });
     const fresh = history.filter((p) => p.ts >= cutoff);
@@ -86,19 +94,17 @@ export class WsAnomalyDetector {
 
     if (fresh.length < 2) return;
 
-    // Compare current price against the oldest point in the window.
     // fresh.length >= 2 guarantees [0] exists; non-null assertion is safe here.
     // biome-ignore lint/style/noNonNullAssertion: guaranteed by length check above
     const windowStart = fresh[0]!;
+    if (now - windowStart.ts < PRICE_SPIKE_MIN_WINDOW_MS) return;
     const change = Math.abs(price - windowStart.price);
     if (change < PRICE_SPIKE_MIN_CHANGE) return;
 
-    // Dedup: skip if we already fired recently.
     const lastFired = this.lastSpikeFired.get(tokenId) ?? 0;
     if (now - lastFired < PRICE_SPIKE_DEDUP_MS) return;
     this.lastSpikeFired.set(tokenId, now);
 
-    const conditionId = this.tokenConditionMap.get(tokenId) ?? tokenId;
     const severity = change >= 0.2 ? 'high' : change >= 0.12 ? 'medium' : 'low';
     const direction = price > windowStart.price ? 'up' : 'down';
 
@@ -141,7 +147,8 @@ export class WsAnomalyDetector {
     if (now - lastFired < ORDERBOOK_THIN_DEDUP_MS) return;
     this.lastThinFired.set(tokenId, now);
 
-    const conditionId = this.tokenConditionMap.get(tokenId) ?? tokenId;
+    // event.market is the hex condition_id for this token.
+    const conditionId = event.market ?? this.tokenConditionMap.get(tokenId) ?? tokenId;
     const severity = totalAskUsdc < 200 ? 'high' : totalAskUsdc < 500 ? 'medium' : 'low';
 
     this.log.info(
