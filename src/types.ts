@@ -202,4 +202,15 @@ export interface AppConfig {
   maxChurnRatio: number;
   /** Dune query IDs to run for weekly wallet discovery. Supports multiple sources. */
   duneQueryIds: number[];
+  /** Maximum number of simultaneously active WebSocket market subscriptions. */
+  wsMaxSubscriptions: number;
+  /** Maximum backoff delay (ms) for WS reconnection attempts. */
+  wsReconnectMaxDelayMs: number;
+  /**
+   * Minutes after which a WS-sourced signal is no longer considered a duplicate.
+   * Guards against the polling cycle re-entering the same position the WS already copied.
+   */
+  wsSignalDedupMinutes: number;
+  /** Days to retain live_events rows before pruning. */
+  liveEventsRetentionDays: number;
 }

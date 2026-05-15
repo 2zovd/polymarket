@@ -154,3 +154,18 @@ export const anomalies = sqliteTable('anomalies', {
   // JSON blob — shape depends on anomaly type
   metadata: text('metadata').notNull().default('{}'),
 });
+
+// ─── Live Events (WebSocket-sourced, short retention) ─────────────────────────
+
+export const liveEvents = sqliteTable('live_events', {
+  id: integer('id', { mode: 'number' }).primaryKey({ autoIncrement: true }),
+  // 'whale_buy' | 'large_trade' | 'price_spike' | 'orderbook_thin' | 'coordinated_entry'
+  type: text('type').notNull(),
+  marketId: text('market_id').notNull(),
+  tokenId: text('token_id'),
+  severity: text('severity'), // 'low' | 'medium' | 'high'
+  // JSON blob — shape depends on event type
+  data: text('data'),
+  // Unix timestamp ms — integer for fast range scans
+  detectedAt: integer('detected_at').notNull(),
+});

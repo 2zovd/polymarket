@@ -4,6 +4,7 @@ import type { ClobClientWrapper } from '../api/clob.js';
 import type { DataApiClient, DataApiPosition } from '../api/data.js';
 import type { DbClient } from '../db/index.js';
 import { markets, openPositions, walletStats, watchedPositions } from '../db/schema.js';
+import { StreamManager } from '../streaming/stream-manager.js';
 import type { AppConfig } from '../types.js';
 import { executeSignal } from './executor.js';
 import { type WhalePosition, generateSignal } from './signal.js';
@@ -29,6 +30,11 @@ const MICRO_CACHE_TTL_MS = 5 * 60 * 1000;
 // for the same whale concurrently, defeating the sessionTokenGuard.
 let streamCycleRunning = false;
 let monitorCycleRunning = false;
+
+// WebSocket streaming layer — started alongside polling loops in startMonitor.
+// Module-level so addSubscription can be called from scanWhale without threading it
+// through every function signature.
+let liveStreamManager: StreamManager | null = null;
 
 /**
  * Returns wallet addresses where >maxRatio of their recent watched positions
@@ -117,10 +123,7 @@ async function loadWhaleWallets(db: DbClient, config: AppConfig, log: Logger) {
 
   const profitableWithAvg =
     config.minProfitableAvgPos > 0
-      ? and(
-          profitableConditions,
-          gte(walletStats.avgPositionSizeUsdc, config.minProfitableAvgPos),
-        )
+      ? and(profitableConditions, gte(walletStats.avgPositionSizeUsdc, config.minProfitableAvgPos))
       : profitableConditions;
 
   const profitableRows = await db.select().from(walletStats).where(profitableWithAvg).all();
@@ -132,12 +135,13 @@ async function loadWhaleWallets(db: DbClient, config: AppConfig, log: Logger) {
   // Churn filter: high churn + near-zero ROI = market maker, not directional signal.
   if (config.maxChurnRatio > 0) {
     const before = allRows.length;
-    allRows = allRows.filter(
-      (r) => r.churnRatio == null || r.churnRatio <= config.maxChurnRatio,
-    );
+    allRows = allRows.filter((r) => r.churnRatio == null || r.churnRatio <= config.maxChurnRatio);
     const removed = before - allRows.length;
     if (removed > 0) {
-      log.info({ removed, threshold: config.maxChurnRatio }, 'Market-maker wallets excluded by churn filter');
+      log.info(
+        { removed, threshold: config.maxChurnRatio },
+        'Market-maker wallets excluded by churn filter',
+      );
     }
   }
 
@@ -361,13 +365,7 @@ async function scanWhale(
       if (sessionTokenGuard.has(pos.tokenId)) continue;
       sessionTokenGuard.add(pos.tokenId);
 
-      const signal = await generateSignal(
-        pos,
-        clob,
-        db,
-        config,
-        openTokenIds,
-      );
+      const signal = await generateSignal(pos, clob, db, config, openTokenIds);
 
       if (signal.status !== 'ready') {
         const reason = signal.skipReason ?? 'unknown';
@@ -403,6 +401,11 @@ async function scanWhale(
   }
 
   await updateSnapshot(db, whale.walletAddress, positions, now);
+
+  // Ensure the WS stream covers markets newly detected by the polling cycle.
+  for (const pos of freshPositions) {
+    liveStreamManager?.addSubscription(pos.tokenId);
+  }
 }
 
 export async function runMonitorCycle(
@@ -557,7 +560,12 @@ export async function runStreamCycle(
       const reason = signal.skipReason ?? 'unknown';
       stats.skipped[reason] = (stats.skipped[reason] ?? 0) + 1;
       childLog.info(
-        { wallet: trade.proxyWallet.slice(0, 10), tokenId: tokenId.slice(0, 12), reason, tradePrice: trade.price },
+        {
+          wallet: trade.proxyWallet.slice(0, 10),
+          tokenId: tokenId.slice(0, 12),
+          reason,
+          tradePrice: trade.price,
+        },
         'Trade signal skipped',
       );
       sessionTokenGuard.delete(tokenId);
@@ -620,6 +628,10 @@ export async function startMonitor(
     .all();
   for (const row of existingOpen) sessionTokenGuard.add(row.tokenId);
 
+  // Start WebSocket streaming layer — whale trades detected in <1s vs 60s polling.
+  liveStreamManager = new StreamManager(db, clob, log, config, sessionTokenGuard);
+  await liveStreamManager.start();
+
   // Run both cycles immediately at startup.
   await runStreamCycle(dataApi, clob, db, log, config);
   await runMonitorCycle(dataApi, clob, db, log, config);
@@ -658,6 +670,7 @@ export async function startMonitor(
   const shutdown = () => {
     clearInterval(streamTimer);
     clearInterval(fullTimer);
+    liveStreamManager?.stop();
     log.info('Monitor stopped');
     process.exit(0);
   };

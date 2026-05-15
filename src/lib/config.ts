@@ -109,6 +109,16 @@ const EnvSchema = z.object({
   // High churn (>3) with near-zero ROI indicates market makers, not directional traders.
   // 0 = disabled.
   MAX_CHURN_RATIO: z.coerce.number().nonnegative().default(2.5),
+  // ─── WebSocket Live Streaming ────────────────────────────────────────────────
+  // Maximum number of simultaneously active WS market subscriptions.
+  WS_MAX_SUBSCRIPTIONS: z.coerce.number().int().positive().default(500),
+  // Maximum backoff delay (ms) for WS reconnection attempts.
+  WS_RECONNECT_MAX_DELAY_MS: z.coerce.number().int().positive().default(30_000),
+  // Minutes after which a WS-sourced signal is no longer considered a duplicate
+  // of a polling-cycle signal for the same (wallet, token). Prevents double-entry.
+  WS_SIGNAL_DEDUP_MINUTES: z.coerce.number().int().positive().default(30),
+  // Days to retain live_events rows before pruning. Lower = smaller DB.
+  LIVE_EVENTS_RETENTION_DAYS: z.coerce.number().int().positive().default(7),
 });
 
 function loadConfig(): AppConfig {
@@ -175,6 +185,10 @@ function loadConfig(): AppConfig {
     maxMicroPositionRatio: env.MAX_MICRO_POSITION_RATIO,
     maxChurnRatio: env.MAX_CHURN_RATIO,
     duneQueryIds: env.DUNE_QUERY_IDS,
+    wsMaxSubscriptions: env.WS_MAX_SUBSCRIPTIONS,
+    wsReconnectMaxDelayMs: env.WS_RECONNECT_MAX_DELAY_MS,
+    wsSignalDedupMinutes: env.WS_SIGNAL_DEDUP_MINUTES,
+    liveEventsRetentionDays: env.LIVE_EVENTS_RETENTION_DAYS,
   };
 }
 
