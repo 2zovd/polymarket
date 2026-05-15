@@ -10,7 +10,8 @@ const consensusSort = ref('total_usdc')
 const filter = ref('all')
 const minTrades = ref(5)
 const horizon = ref('all')
-const minSize = ref(0)
+const minSizeInput = ref('')
+const minSize = computed(() => parseFloat(minSizeInput.value) || 0)
 
 const sharedQuery = computed(() => ({
   filter: filter.value,
@@ -32,7 +33,7 @@ const { data: consensusData, pending: consensusPending, refresh: consensusRefres
   },
 )
 
-watch([sort, filter, minTrades, horizon, minSize], () => {
+watch([sort, filter, minTrades, horizon, minSizeInput], () => {
   page.value = 1
 })
 
@@ -144,17 +145,17 @@ const resultCount = computed(() =>
             </div>
 
             <!-- Min position size -->
-            <div class="flex items-center gap-2">
+            <div class="flex items-center gap-1.5">
               <span class="text-xs text-gray-400">Min size:</span>
-              <div class="flex gap-1">
-                <UButton
-                  v-for="s in [{ label: 'Any', value: 0 }, { label: '$25', value: 25 }, { label: '$50', value: 50 }, { label: '$100', value: 100 }, { label: '$250', value: 250 }]"
-                  :key="s.value"
-                  size="xs"
-                  :variant="minSize === s.value ? 'solid' : 'ghost'"
-                  :color="minSize === s.value ? 'primary' : 'gray'"
-                  @click="minSize = s.value"
-                >{{ s.label }}</UButton>
+              <div class="relative flex items-center">
+                <span class="absolute left-2 text-xs text-gray-500 pointer-events-none">$</span>
+                <input
+                  v-model="minSizeInput"
+                  type="number"
+                  min="0"
+                  placeholder="any"
+                  class="w-20 pl-5 pr-1 bg-transparent border border-gray-700 rounded py-0.5 text-xs font-mono text-gray-300 placeholder-gray-600 focus:outline-none focus:border-gray-500 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                />
               </div>
             </div>
 
