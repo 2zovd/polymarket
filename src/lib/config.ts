@@ -119,6 +119,8 @@ const EnvSchema = z.object({
   WS_SIGNAL_DEDUP_MINUTES: z.coerce.number().int().positive().default(30),
   // Days to retain live_events rows before pruning. Lower = smaller DB.
   LIVE_EVENTS_RETENTION_DAYS: z.coerce.number().int().positive().default(7),
+  // Minimum USDC value of a single WS trade to emit a large_trade live event.
+  WS_LARGE_TRADE_USDC: z.coerce.number().positive().default(5_000),
 });
 
 function loadConfig(): AppConfig {
@@ -189,6 +191,7 @@ function loadConfig(): AppConfig {
     wsReconnectMaxDelayMs: env.WS_RECONNECT_MAX_DELAY_MS,
     wsSignalDedupMinutes: env.WS_SIGNAL_DEDUP_MINUTES,
     liveEventsRetentionDays: env.LIVE_EVENTS_RETENTION_DAYS,
+    wsLargeTradeUsdc: env.WS_LARGE_TRADE_USDC,
   };
 }
 

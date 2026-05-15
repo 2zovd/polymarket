@@ -1,6 +1,6 @@
 import type { Logger } from 'pino';
-import type { MarketTradeEvent, WsMarketEvent } from './types.js';
-import { isTradeEvent } from './types.js';
+import type { BookEvent, LastTradePriceEvent, MarketTradeEvent, WsMarketEvent } from './types.js';
+import { isBookEvent, isPriceEvent, isTradeEvent } from './types.js';
 import { WsClient } from './ws-client.js';
 
 const MARKET_WS_URL = 'wss://ws-subscriptions-clob.polymarket.com/ws/market';
@@ -9,6 +9,10 @@ const SUBSCRIBE_BATCH_SIZE = 100;
 
 export interface MarketStreamHandlers {
   onTrade: (event: MarketTradeEvent) => void;
+  // Receives every trade (all wallets, both sides) for broad surveillance.
+  onAllTrade?: (event: MarketTradeEvent) => void;
+  onBook?: (event: BookEvent) => void;
+  onPriceChange?: (event: LastTradePriceEvent) => void;
 }
 
 export class MarketStream {
@@ -77,6 +81,11 @@ export class MarketStream {
     for (const event of events) {
       if (isTradeEvent(event)) {
         this.handlers.onTrade(event);
+        this.handlers.onAllTrade?.(event);
+      } else if (isBookEvent(event)) {
+        this.handlers.onBook?.(event);
+      } else if (isPriceEvent(event)) {
+        this.handlers.onPriceChange?.(event);
       }
     }
   }

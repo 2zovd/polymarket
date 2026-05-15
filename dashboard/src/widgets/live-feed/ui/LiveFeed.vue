@@ -13,6 +13,13 @@ const SEVERITY_DOT: Record<string, string> = {
   low: 'bg-gray-500',
 }
 
+const TYPE_BADGE: Record<string, { label: string; cls: string }> = {
+  whale_buy: { label: 'whale buy', cls: 'text-purple-400 bg-purple-400/10' },
+  large_trade: { label: 'large trade', cls: 'text-orange-400 bg-orange-400/10' },
+  price_spike: { label: 'price spike', cls: 'text-cyan-400 bg-cyan-400/10' },
+  orderbook_thin: { label: 'book thin', cls: 'text-yellow-500 bg-yellow-500/10' },
+}
+
 const EXEC_BADGE: Record<string, { label: string; cls: string }> = {
   executed: { label: 'executed', cls: 'text-green-400 bg-green-400/10' },
   'dry-run': { label: 'dry-run', cls: 'text-blue-400 bg-blue-400/10' },
@@ -20,10 +27,14 @@ const EXEC_BADGE: Record<string, { label: string; cls: string }> = {
   failed: { label: 'failed', cls: 'text-red-400 bg-red-400/10' },
 }
 
-function execStatus(ev: LiveEvent): { label: string; cls: string } {
+function typeBadge(ev: LiveEvent) {
+  return TYPE_BADGE[ev.type] ?? { label: ev.type, cls: 'text-gray-400 bg-gray-700/50' }
+}
+
+function execBadge(ev: LiveEvent) {
   if (ev.data.executionStatus) return EXEC_BADGE[ev.data.executionStatus] ?? EXEC_BADGE.failed
   if (ev.data.signalStatus === 'skipped') return EXEC_BADGE.skipped
-  return EXEC_BADGE.failed
+  return null
 }
 
 function msAgo(ms: number): string {
@@ -38,6 +49,10 @@ function truncate(str: string, max: number) {
   return str.length > max ? str.slice(0, max) + '…' : str
 }
 
+function shortAddr(addr: string) {
+  return `${addr.slice(0, 6)}…${addr.slice(-4)}`
+}
+
 // Refresh relative timestamps every 30s.
 const tick = ref(0)
 let timer: ReturnType<typeof setInterval>
@@ -47,29 +62,26 @@ onUnmounted(() => clearInterval(timer))
 
 <template>
   <div class="overflow-x-auto">
-    <!-- Empty state -->
     <div v-if="!loading && !events.length" class="py-12 text-center text-gray-500 text-sm">
-      No live events yet — waiting for whale activity…
+      No live events yet — waiting for market activity…
     </div>
 
     <table v-else class="w-full text-sm">
       <thead>
         <tr class="text-left text-xs text-gray-500 border-b border-gray-800">
           <th class="pb-2 pr-3 font-medium w-4" />
-          <th class="pb-2 pr-4 font-medium">Time</th>
-          <th class="pb-2 pr-4 font-medium">Whale</th>
+          <th class="pb-2 pr-4 font-medium whitespace-nowrap">Time</th>
+          <th class="pb-2 pr-4 font-medium">Type</th>
           <th class="pb-2 pr-4 font-medium">Market</th>
-          <th class="pb-2 pr-4 font-medium">Outcome</th>
-          <th class="pb-2 pr-4 font-medium text-right">Size</th>
+          <th class="pb-2 pr-4 font-medium">Details</th>
           <th class="pb-2 font-medium">Status</th>
         </tr>
       </thead>
       <tbody>
         <tr v-if="loading">
-          <td colspan="7" class="py-4"><USkeleton class="h-4 w-full" /></td>
+          <td colspan="6" class="py-4"><USkeleton class="h-4 w-full" /></td>
         </tr>
         <template v-else>
-          <!-- Use tick in key to force re-render of timestamps -->
           <tr
             v-for="ev in events"
             :key="`${ev.id}-${tick}`"
@@ -77,60 +89,87 @@ onUnmounted(() => clearInterval(timer))
           >
             <!-- Severity dot -->
             <td class="py-2 pr-3">
-              <span
-                class="inline-block w-2 h-2 rounded-full"
-                :class="SEVERITY_DOT[ev.severity] ?? 'bg-gray-600'"
-              />
+              <span class="inline-block w-2 h-2 rounded-full" :class="SEVERITY_DOT[ev.severity] ?? 'bg-gray-600'" />
             </td>
 
             <!-- Time -->
-            <td class="py-2 pr-4 text-gray-400 whitespace-nowrap text-xs">
-              {{ msAgo(ev.detectedAt) }}
-            </td>
+            <td class="py-2 pr-4 text-gray-400 whitespace-nowrap text-xs">{{ msAgo(ev.detectedAt) }}</td>
 
-            <!-- Wallet -->
+            <!-- Type badge -->
             <td class="py-2 pr-4">
-              <NuxtLink
-                :to="`/whales/${ev.data.wallet}`"
-                class="font-mono text-xs text-blue-400 hover:text-blue-300 transition-colors"
-              >
-                {{ truncate(ev.data.wallet, 6) }}…{{ ev.data.wallet.slice(-4) }}
-              </NuxtLink>
+              <span
+                class="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium whitespace-nowrap"
+                :class="typeBadge(ev).cls"
+              >{{ typeBadge(ev).label }}</span>
             </td>
 
             <!-- Market -->
-            <td class="py-2 pr-4 max-w-xs">
-              <span v-if="ev.question" class="text-gray-300 text-xs">
-                {{ truncate(ev.question, 55) }}
-              </span>
-              <span v-else class="text-gray-600 font-mono text-xs">
-                {{ ev.marketId.slice(0, 10) }}…
-              </span>
+            <td class="py-2 pr-4 max-w-[200px]">
+              <span v-if="ev.question" class="text-gray-300 text-xs">{{ truncate(ev.question, 45) }}</span>
+              <span v-else class="text-gray-600 font-mono text-xs">{{ ev.marketId.slice(0, 10) }}…</span>
             </td>
 
-            <!-- Outcome -->
-            <td class="py-2 pr-4 text-gray-300 text-xs whitespace-nowrap">
-              {{ ev.data.outcome }}
+            <!-- Details (per event type) -->
+            <td class="py-2 pr-4 text-xs">
+              <!-- whale_buy -->
+              <template v-if="ev.type === 'whale_buy'">
+                <NuxtLink
+                  v-if="ev.data.wallet"
+                  :to="`/whales/${ev.data.wallet}`"
+                  class="font-mono text-blue-400 hover:text-blue-300"
+                >{{ shortAddr(ev.data.wallet) }}</NuxtLink>
+                <span class="text-gray-400 mx-1">bought</span>
+                <span class="text-gray-200">{{ ev.data.outcome }}</span>
+                <span class="text-gray-500 mx-1">·</span>
+                <span :class="(ev.data.usdcSize ?? 0) >= 10_000 ? 'text-red-400' : (ev.data.usdcSize ?? 0) >= 1_000 ? 'text-yellow-400' : 'text-gray-300'">
+                  {{ formatUsdc(ev.data.usdcSize) }}
+                </span>
+              </template>
+
+              <!-- large_trade -->
+              <template v-else-if="ev.type === 'large_trade'">
+                <span :class="ev.data.side === 'BUY' ? 'text-green-400' : 'text-red-400'">{{ ev.data.side }}</span>
+                <span class="text-gray-400 mx-1">{{ formatUsdc(ev.data.usdcSize) }}</span>
+                <span class="text-gray-300">{{ ev.data.outcome }}</span>
+                <span v-if="ev.data.wallet" class="text-gray-600 ml-1">· {{ shortAddr(ev.data.wallet) }}</span>
+              </template>
+
+              <!-- price_spike -->
+              <template v-else-if="ev.type === 'price_spike'">
+                <span class="font-mono text-gray-400">{{ ev.data.priceFrom?.toFixed(2) }}</span>
+                <span class="mx-1" :class="ev.data.direction === 'up' ? 'text-green-400' : 'text-red-400'">
+                  {{ ev.data.direction === 'up' ? '↑' : '↓' }}
+                </span>
+                <span class="font-mono text-gray-200">{{ ev.data.priceTo?.toFixed(2) }}</span>
+                <span class="ml-1 font-semibold" :class="ev.data.direction === 'up' ? 'text-green-400' : 'text-red-400'">
+                  ({{ ev.data.changePp?.toFixed(1) }}pp)
+                </span>
+              </template>
+
+              <!-- orderbook_thin -->
+              <template v-else-if="ev.type === 'orderbook_thin'">
+                <span class="text-gray-400">ask liq:</span>
+                <span class="font-mono text-yellow-400 ml-1">{{ formatUsdc(ev.data.totalAskUsdc) }}</span>
+                <span class="text-gray-600 ml-1">({{ ev.data.askLevels }} levels)</span>
+              </template>
+
+              <!-- fallback -->
+              <template v-else>
+                <span class="text-gray-600 font-mono">{{ ev.type }}</span>
+              </template>
             </td>
 
-            <!-- Size -->
-            <td class="py-2 pr-4 text-right font-mono text-xs whitespace-nowrap">
-              <span :class="ev.data.usdcSize >= 10_000 ? 'text-red-400' : ev.data.usdcSize >= 1_000 ? 'text-yellow-400' : 'text-gray-300'">
-                {{ formatUsdc(ev.data.usdcSize) }}
-              </span>
-            </td>
-
-            <!-- Execution status -->
+            <!-- Status (whale_buy only has exec status; others blank) -->
             <td class="py-2">
-              <span
-                class="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium"
-                :class="execStatus(ev).cls"
-              >
-                {{ execStatus(ev).label }}
-              </span>
-              <p v-if="ev.data.skipReason" class="text-xs text-gray-600 mt-0.5">
-                {{ ev.data.skipReason.split(':')[0].replace(/_/g, ' ') }}
-              </p>
+              <template v-if="execBadge(ev)">
+                <span
+                  class="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium"
+                  :class="execBadge(ev)!.cls"
+                >{{ execBadge(ev)!.label }}</span>
+                <p v-if="ev.data.skipReason" class="text-xs text-gray-600 mt-0.5">
+                  {{ ev.data.skipReason.split(':')[0].replace(/_/g, ' ') }}
+                </p>
+              </template>
             </td>
           </tr>
         </template>

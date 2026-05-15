@@ -4,15 +4,12 @@ useHead({ title: 'Live Feed — Polymarket Dashboard' })
 const { events, connected, paused, clear } = useLiveEventStream()
 
 const severityFilter = ref<'all' | 'low' | 'medium' | 'high'>('all')
-const statusFilter = ref<'all' | 'executed' | 'dry-run' | 'skipped'>('all')
+const typeFilter = ref<'all' | 'whale_buy' | 'large_trade' | 'price_spike' | 'orderbook_thin'>('all')
 
 const filtered = computed(() => {
   return events.value.filter((ev) => {
     if (severityFilter.value !== 'all' && ev.severity !== severityFilter.value) return false
-    if (statusFilter.value !== 'all') {
-      const execSt = ev.data.executionStatus ?? (ev.data.signalStatus === 'skipped' ? 'skipped' : null)
-      if (execSt !== statusFilter.value) return false
-    }
+    if (typeFilter.value !== 'all' && ev.type !== typeFilter.value) return false
     return true
   })
 })
@@ -50,17 +47,18 @@ const filtered = computed(() => {
           class="w-36"
         />
 
-        <!-- Status filter -->
+        <!-- Type filter -->
         <USelect
-          v-model="statusFilter"
+          v-model="typeFilter"
           :options="[
-            { label: 'All status', value: 'all' },
-            { label: 'Executed', value: 'executed' },
-            { label: 'Dry-run', value: 'dry-run' },
-            { label: 'Skipped', value: 'skipped' },
+            { label: 'All types', value: 'all' },
+            { label: 'Whale buy', value: 'whale_buy' },
+            { label: 'Large trade', value: 'large_trade' },
+            { label: 'Price spike', value: 'price_spike' },
+            { label: 'Book thin', value: 'orderbook_thin' },
           ]"
           size="xs"
-          class="w-32"
+          class="w-36"
         />
 
         <UButton

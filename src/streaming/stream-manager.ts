@@ -6,6 +6,7 @@ import { markets, walletStats, watchedPositions } from '../db/schema.js';
 import type { AppConfig } from '../types.js';
 import { TradeEventHandler } from './event-handlers.js';
 import { MarketStream } from './market-stream.js';
+import { WsAnomalyDetector } from './ws-anomaly-detector.js';
 
 const WALLET_CACHE_TTL_MS = 5 * 60 * 1_000;
 const METRICS_INTERVAL_MS = 5 * 60 * 1_000;
@@ -15,8 +16,11 @@ const SUBSCRIBE_DELAY_MS = 1_500;
 export class StreamManager {
   private readonly stream: MarketStream;
   private readonly handler: TradeEventHandler;
+  private readonly anomalyDetector: WsAnomalyDetector;
   // In-place Set shared with TradeEventHandler — cleared and repopulated on refresh.
   private readonly trackedWallets = new Set<string>();
+  // tokenId → conditionId, built from watched_positions and updated on new subscriptions.
+  private readonly tokenConditionMap = new Map<string, string>();
   private walletRefreshTimer: ReturnType<typeof setInterval> | null = null;
   private metricsTimer: ReturnType<typeof setInterval> | null = null;
 
@@ -37,10 +41,20 @@ export class StreamManager {
       config,
     );
 
+    this.anomalyDetector = new WsAnomalyDetector(
+      this.tokenConditionMap,
+      config.wsLargeTradeUsdc,
+      db,
+      log,
+    );
+
     this.stream = new MarketStream(
       {
         onTrade: (e) =>
           this.handler.onTrade(e).catch((err) => log.error({ err }, 'ws:trade_handler_error')),
+        onAllTrade: (e) => this.anomalyDetector.onTrade(e),
+        onBook: (e) => this.anomalyDetector.onBook(e),
+        onPriceChange: (e) => this.anomalyDetector.onPriceChange(e),
       },
       log,
     );
@@ -48,7 +62,16 @@ export class StreamManager {
 
   async start(): Promise<void> {
     await this.refreshTrackedWallets();
-    const tokenIds = await this.loadInitialTokenIds();
+    const rows = await this.loadInitialRows();
+
+    for (const row of rows) {
+      this.tokenConditionMap.set(row.tokenId, row.conditionId);
+    }
+
+    const tokenIds = [...new Set(rows.map((r) => r.tokenId))].slice(
+      0,
+      this.config.wsMaxSubscriptions,
+    );
 
     this.stream.start();
 
@@ -72,12 +95,17 @@ export class StreamManager {
     }, METRICS_INTERVAL_MS);
 
     this.log.info(
-      { tokenIds: tokenIds.length, trackedWallets: this.trackedWallets.size },
+      {
+        tokenIds: tokenIds.length,
+        trackedWallets: this.trackedWallets.size,
+        cap: this.config.wsMaxSubscriptions,
+      },
       'WebSocket streaming started',
     );
   }
 
-  addSubscription(tokenId: string): void {
+  addSubscription(tokenId: string, conditionId?: string): void {
+    if (conditionId) this.tokenConditionMap.set(tokenId, conditionId);
     this.stream.subscribe([tokenId]);
   }
 
@@ -94,11 +122,11 @@ export class StreamManager {
     this.log.info('WebSocket streaming stopped');
   }
 
-  private async loadInitialTokenIds(): Promise<string[]> {
+  private async loadInitialRows(): Promise<{ tokenId: string; conditionId: string }[]> {
     // Only subscribe to tokens of active, open markets — resolved/closed tokens generate
     // no new events and waste subscription quota.
     const rows = await this.db
-      .select({ tokenId: watchedPositions.tokenId })
+      .select({ tokenId: watchedPositions.tokenId, conditionId: watchedPositions.conditionId })
       .from(watchedPositions)
       .innerJoin(walletStats, eq(watchedPositions.walletAddress, walletStats.walletAddress))
       .innerJoin(markets, eq(watchedPositions.conditionId, markets.conditionId))
@@ -111,13 +139,11 @@ export class StreamManager {
       )
       .all();
 
-    const unique = [...new Set(rows.map((r) => r.tokenId))];
-    const capped = unique.slice(0, this.config.wsMaxSubscriptions);
     this.log.info(
-      { active: unique.length, subscribing: capped.length, cap: this.config.wsMaxSubscriptions },
+      { active: rows.length, cap: this.config.wsMaxSubscriptions },
       'ws:initial_subscriptions_loaded',
     );
-    return capped;
+    return rows;
   }
 
   private async refreshTrackedWallets(): Promise<void> {

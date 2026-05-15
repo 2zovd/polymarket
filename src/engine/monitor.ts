@@ -404,7 +404,7 @@ async function scanWhale(
 
   // Ensure the WS stream covers markets newly detected by the polling cycle.
   for (const pos of freshPositions) {
-    liveStreamManager?.addSubscription(pos.tokenId);
+    liveStreamManager?.addSubscription(pos.tokenId, pos.conditionId);
   }
 }
 

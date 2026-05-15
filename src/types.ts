@@ -213,4 +213,6 @@ export interface AppConfig {
   wsSignalDedupMinutes: number;
   /** Days to retain live_events rows before pruning. */
   liveEventsRetentionDays: number;
+  /** Minimum USDC size of a single trade to trigger a large_trade live event. */
+  wsLargeTradeUsdc: number;
 }

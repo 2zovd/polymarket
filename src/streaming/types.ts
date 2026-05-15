@@ -57,3 +57,11 @@ export type WsMarketEvent =
 export function isTradeEvent(e: WsMarketEvent): e is MarketTradeEvent {
   return e.event_type === 'trade';
 }
+
+export function isBookEvent(e: WsMarketEvent): e is BookEvent {
+  return e.event_type === 'book';
+}
+
+export function isPriceEvent(e: WsMarketEvent): e is LastTradePriceEvent {
+  return e.event_type === 'last_trade_price';
+}
