@@ -5,12 +5,21 @@ useHead({ title: 'Whales — Polymarket Dashboard' })
 
 const { filter, sort, order, filterOptions, sortOptions, toggleSort } = useWhaleFilters()
 const page = ref(1)
+const searchQuery = ref('')
+const activeSearch = ref('')
+
+let searchTimer: ReturnType<typeof setTimeout> | null = null
+watch(searchQuery, (val) => {
+  if (searchTimer) clearTimeout(searchTimer)
+  searchTimer = setTimeout(() => { activeSearch.value = val; page.value = 1 }, 300)
+})
+
 watch([filter, sort, order], () => { page.value = 1 })
 
 const { data, pending } = useFetch('/api/whales', {
-  query: computed(() => ({ page: page.value, filter: filter.value, sort: sort.value, order: order.value })),
+  query: computed(() => ({ page: page.value, filter: filter.value, sort: sort.value, order: order.value, q: activeSearch.value })),
   server: false,
-  watch: [page, filter, sort, order],
+  watch: [page, filter, sort, order, activeSearch],
 })
 
 const router = useRouter()
@@ -22,6 +31,15 @@ function selectWhale(whale: WhaleRow) {
 <template>
   <div class="space-y-6">
     <h1 class="text-xl font-bold text-white">Whale Leaderboard</h1>
+
+    <!-- Search -->
+    <UInput
+      v-model="searchQuery"
+      placeholder="Search by wallet address…"
+      icon="i-heroicons-magnifying-glass"
+      class="max-w-md"
+      :ui="{ base: 'font-mono text-xs' }"
+    />
 
     <!-- Filter + sort controls -->
     <WhaleFilterControls

@@ -10,7 +10,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{ (e: 'sort', key: string): void }>()
 
-const colSpan = computed(() => (props.mini ? 7 : 11))
+const colSpan = computed(() => (props.mini ? 7 : 12))
 
 function driftClass(drift: number | null): string {
   if (drift == null) return 'text-gray-400'
@@ -30,6 +30,12 @@ function sortIcon(key: string): string {
   if (props.sort !== key) return 'i-heroicons-arrows-up-down'
   return key === 'brier' ? 'i-heroicons-arrow-up' : 'i-heroicons-arrow-down'
 }
+
+function formatSize(size: number, avgPrice: number): string {
+  const usdc = size * avgPrice
+  if (usdc >= 1000) return `$${(usdc / 1000).toFixed(1)}k`
+  return `$${Math.round(usdc)}`
+}
 </script>
 
 <template>
@@ -41,6 +47,11 @@ function sortIcon(key: string): string {
           <th class="pb-2 pr-4 font-medium">Outcome</th>
           <th class="pb-2 pr-4 font-medium">Whale</th>
           <template v-if="!mini">
+            <th class="pb-2 pr-4 font-medium text-right">
+              <UTooltip text="Whale's position size in USDC (shares × avg entry price)">
+                <span>Size</span>
+              </UTooltip>
+            </th>
             <th class="pb-2 pr-4 font-medium text-right">
               <UTooltip text="Win rate on resolved trades">
                 <button class="inline-flex items-center gap-1 hover:text-gray-300" @click="emit('sort', 'win_rate')">
@@ -87,7 +98,7 @@ function sortIcon(key: string): string {
             </UTooltip>
           </th>
           <th class="pb-2 font-medium text-right">
-            <UTooltip text="Quality score: A ≥ 80, B ≥ 60, C ≥ 40, D < 40">
+            <UTooltip text="Composite whale quality score (0–100). Formula: Brier calibration 40% + Win rate 35% + ROI 15% + p-value significance 10%, with freshness decay over 72h. A ≥ 80 · B ≥ 60 · C ≥ 40 · D < 40">
               <button v-if="!mini" class="inline-flex items-center gap-1 hover:text-gray-300" @click="emit('sort', 'score')">
                 Score
                 <UIcon :name="sortIcon('score')" class="w-3 h-3" />
@@ -119,6 +130,7 @@ function sortIcon(key: string): string {
           <td class="py-2 pr-4 text-gray-300">{{ r.outcome }}</td>
           <td class="py-2 pr-4"><AddressTag :address="r.wallet_address" short /></td>
           <template v-if="!mini">
+            <td class="py-2 pr-4 text-right font-mono text-gray-300">{{ formatSize(r.size, r.avg_price) }}</td>
             <td class="py-2 pr-4 text-right font-mono text-gray-300">{{ formatPct(r.win_rate) }}</td>
             <td
               class="py-2 pr-4 text-right font-mono"

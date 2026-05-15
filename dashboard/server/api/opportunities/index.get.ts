@@ -64,6 +64,7 @@ export default defineEventHandler((event) => {
   const filter = (query.filter as string) || 'all'
   const minTrades = Math.max(0, Number(query.minTrades) || 5)
   const horizon = (query.horizon as string) || 'all'
+  const minSize = Math.max(0, Number(query.minSize) || 0)
 
   const db = getDb()
 
@@ -75,11 +76,15 @@ export default defineEventHandler((event) => {
         : ''
 
   const horizonClause =
-    horizon === '1d' ? `AND m.end_date_iso <= datetime('now', '+1 day')`
-    : horizon === '3d' ? `AND m.end_date_iso <= datetime('now', '+3 days')`
-    : horizon === '7d' ? `AND m.end_date_iso <= datetime('now', '+7 days')`
-    : horizon === '30d' ? `AND m.end_date_iso <= datetime('now', '+30 days')`
+    horizon === '2h'  ? `AND m.end_date_iso <= strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '+2 hours')`
+    : horizon === '6h'  ? `AND m.end_date_iso <= strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '+6 hours')`
+    : horizon === '1d'  ? `AND m.end_date_iso <= strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '+1 day')`
+    : horizon === '3d'  ? `AND m.end_date_iso <= strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '+3 days')`
+    : horizon === '7d'  ? `AND m.end_date_iso <= strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '+7 days')`
+    : horizon === '30d' ? `AND m.end_date_iso <= strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '+30 days')`
     : ''
+
+  const sizeClause = minSize > 0 ? `AND (wp.size * wp.avg_price) >= ${minSize}` : ''
 
   const rows = db
     .prepare(
@@ -96,10 +101,10 @@ export default defineEventHandler((event) => {
        WHERE m.accepting_orders = 1
          AND m.active = 1
          AND m.closed = 0
-         AND (m.end_date_iso IS NULL OR m.end_date_iso > datetime('now'))
+         AND (m.end_date_iso IS NULL OR m.end_date_iso > strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
          AND m.question NOT LIKE '%Up or Down%'
          AND (ws.is_sharp = 1 OR ws.is_profitable = 1)
-         AND ws.resolved_trades >= ? ${filterClause} ${horizonClause}`,
+         AND ws.resolved_trades >= ? ${filterClause} ${horizonClause} ${sizeClause}`,
     )
     .all(minTrades) as RawRow[]
 

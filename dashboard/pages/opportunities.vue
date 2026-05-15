@@ -8,6 +8,7 @@ const sort = ref('score')
 const filter = ref('all')
 const minTrades = ref(5)
 const horizon = ref('all')
+const minSize = ref(0)
 
 const { data, pending, refresh } = useFetch('/api/opportunities', {
   query: computed(() => ({
@@ -16,11 +17,12 @@ const { data, pending, refresh } = useFetch('/api/opportunities', {
     filter: filter.value,
     minTrades: minTrades.value,
     horizon: horizon.value,
+    minSize: minSize.value,
   })),
   server: false,
 })
 
-watch([sort, filter, minTrades, horizon], () => {
+watch([sort, filter, minTrades, horizon, minSize], () => {
   page.value = 1
 })
 
@@ -39,14 +41,30 @@ onMounted(() => {
         <div class="flex flex-wrap items-center gap-4">
           <!-- Whale filter -->
           <div class="flex items-center gap-1">
-            <UButton
-              v-for="f in [{ label: 'All', value: 'all' }, { label: 'Sharp', value: 'sharp' }, { label: 'Profitable', value: 'profitable' }]"
-              :key="f.value"
-              size="xs"
-              :variant="filter === f.value ? 'solid' : 'ghost'"
-              :color="filter === f.value ? 'primary' : 'gray'"
-              @click="filter = f.value"
-            >{{ f.label }}</UButton>
+            <UTooltip text="Show all qualifying whales">
+              <UButton
+                size="xs"
+                :variant="filter === 'all' ? 'solid' : 'ghost'"
+                :color="filter === 'all' ? 'primary' : 'gray'"
+                @click="filter = 'all'"
+              >All</UButton>
+            </UTooltip>
+            <UTooltip text="p < 0.01, Brier < 0.22, ROI > 5% — statistically rigorous & well-calibrated">
+              <UButton
+                size="xs"
+                :variant="filter === 'sharp' ? 'solid' : 'ghost'"
+                :color="filter === 'sharp' ? 'primary' : 'gray'"
+                @click="filter = 'sharp'"
+              >Sharp</UButton>
+            </UTooltip>
+            <UTooltip text="p < 0.05, positive ROI — profitable but calibration not required">
+              <UButton
+                size="xs"
+                :variant="filter === 'profitable' ? 'solid' : 'ghost'"
+                :color="filter === 'profitable' ? 'primary' : 'gray'"
+                @click="filter = 'profitable'"
+              >Profitable</UButton>
+            </UTooltip>
           </div>
 
           <!-- Ends within -->
@@ -54,7 +72,7 @@ onMounted(() => {
             <span class="text-xs text-gray-400">Ends in:</span>
             <div class="flex gap-1">
               <UButton
-                v-for="h in [{ label: 'Any', value: 'all' }, { label: '1d', value: '1d' }, { label: '3d', value: '3d' }, { label: '7d', value: '7d' }, { label: '30d', value: '30d' }]"
+                v-for="h in [{ label: 'Any', value: 'all' }, { label: '2h', value: '2h' }, { label: '6h', value: '6h' }, { label: '1d', value: '1d' }, { label: '3d', value: '3d' }, { label: '7d', value: '7d' }, { label: '30d', value: '30d' }]"
                 :key="h.value"
                 size="xs"
                 :variant="horizon === h.value ? 'solid' : 'ghost'"
@@ -76,6 +94,21 @@ onMounted(() => {
                 :color="minTrades === n ? 'primary' : 'gray'"
                 @click="minTrades = n"
               >{{ n }}</UButton>
+            </div>
+          </div>
+
+          <!-- Min position size -->
+          <div class="flex items-center gap-2">
+            <span class="text-xs text-gray-400">Min size:</span>
+            <div class="flex gap-1">
+              <UButton
+                v-for="s in [{ label: 'Any', value: 0 }, { label: '$25', value: 25 }, { label: '$50', value: 50 }, { label: '$100', value: 100 }, { label: '$250', value: 250 }]"
+                :key="s.value"
+                size="xs"
+                :variant="minSize === s.value ? 'solid' : 'ghost'"
+                :color="minSize === s.value ? 'primary' : 'gray'"
+                @click="minSize = s.value"
+              >{{ s.label }}</UButton>
             </div>
           </div>
 

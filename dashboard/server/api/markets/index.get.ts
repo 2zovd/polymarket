@@ -12,7 +12,7 @@ export default defineEventHandler((event) => {
   const db = getDb()
 
   let statusClause = ''
-  if (status === 'active') statusClause = 'AND active = 1 AND closed = 0 AND accepting_orders = 1'
+  if (status === 'active') statusClause = `AND active = 1 AND closed = 0 AND accepting_orders = 1 AND (end_date_iso IS NULL OR end_date_iso > strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))`
   else if (status === 'closed') statusClause = 'AND closed = 1'
   else if (status === 'resolved') statusClause = "AND status = 'resolved'"
 
