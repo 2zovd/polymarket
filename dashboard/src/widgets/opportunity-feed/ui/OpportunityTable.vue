@@ -49,7 +49,10 @@ function formatSize(size: number, avgPrice: number): string {
           <template v-if="!mini">
             <th class="pb-2 pr-4 font-medium text-right">
               <UTooltip text="Whale's position size in USDC (shares × avg entry price)">
-                <span>Size</span>
+                <button class="inline-flex items-center gap-1 hover:text-gray-300" @click="emit('sort', 'size')">
+                  Size
+                  <UIcon :name="sortIcon('size')" class="w-3 h-3" />
+                </button>
               </UTooltip>
             </th>
             <th class="pb-2 pr-4 font-medium text-right">

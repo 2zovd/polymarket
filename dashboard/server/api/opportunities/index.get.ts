@@ -143,6 +143,8 @@ export default defineEventHandler((event) => {
     enriched.sort((a, b) => (b.roi ?? 0) - (a.roi ?? 0))
   } else if (sort === 'brier') {
     enriched.sort((a, b) => (a.brier_score ?? 1) - (b.brier_score ?? 1))
+  } else if (sort === 'size') {
+    enriched.sort((a, b) => b.size * b.avg_price - a.size * a.avg_price)
   } else {
     enriched.sort((a, b) => b.score - a.score)
   }
