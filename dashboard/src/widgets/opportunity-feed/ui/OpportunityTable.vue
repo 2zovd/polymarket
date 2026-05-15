@@ -10,6 +10,12 @@ const props = defineProps<{
 
 const emit = defineEmits<{ (e: 'sort', key: string): void }>()
 
+const selectedRow = ref<OpportunityRow | null>(null)
+const isOpen = computed({
+  get: () => selectedRow.value !== null,
+  set: (v) => { if (!v) selectedRow.value = null },
+})
+
 const colSpan = computed(() => (props.mini ? 7 : 12))
 
 function driftClass(drift: number | null): string {
@@ -35,6 +41,10 @@ function formatSize(size: number, avgPrice: number): string {
   const usdc = size * avgPrice
   if (usdc >= 1000) return `$${(usdc / 1000).toFixed(1)}k`
   return `$${Math.round(usdc)}`
+}
+
+function openDetail(row: OpportunityRow) {
+  selectedRow.value = row
 }
 </script>
 
@@ -124,14 +134,15 @@ function formatSize(size: number, avgPrice: number): string {
           v-for="r in rows"
           v-else
           :key="`${r.wallet_address}-${r.condition_id}-${r.outcome}`"
-          class="border-b border-gray-800/50 hover:bg-gray-800/20 transition-colors"
+          class="border-b border-gray-800/50 hover:bg-gray-800/20 transition-colors cursor-pointer"
+          @click="openDetail(r)"
         >
-          <td class="py-2 pr-4 max-w-xs">
+          <td class="py-2 pr-4 max-w-xs" @click.stop>
             <MarketLink v-if="r.question" :question="r.question" :event-slug="r.event_slug" :max-len="mini ? 35 : 55" />
             <span v-else class="text-gray-500 font-mono text-xs">{{ r.condition_id.slice(0, 10) }}…</span>
           </td>
           <td class="py-2 pr-4 text-gray-300">{{ r.outcome }}</td>
-          <td class="py-2 pr-4"><AddressTag :address="r.wallet_address" short /></td>
+          <td class="py-2 pr-4" @click.stop><AddressTag :address="r.wallet_address" short /></td>
           <template v-if="!mini">
             <td class="py-2 pr-4 text-right font-mono text-gray-300">{{ formatSize(r.size, r.avg_price) }}</td>
             <td class="py-2 pr-4 text-right font-mono text-gray-300">{{ formatPct(r.win_rate) }}</td>
@@ -165,4 +176,112 @@ function formatSize(size: number, avgPrice: number): string {
       </tbody>
     </table>
   </div>
+
+  <!-- Market detail slide-over -->
+  <USlideover v-model="isOpen" side="right" :ui="{ width: 'max-w-lg' }">
+    <div v-if="selectedRow" class="flex flex-col h-full bg-gray-950 overflow-y-auto">
+      <!-- Header -->
+      <div class="flex items-start justify-between gap-3 p-4 border-b border-gray-800">
+        <div class="flex-1 min-w-0">
+          <p class="text-xs text-gray-500 mb-1">{{ selectedRow.outcome }} · {{ selectedRow.condition_id.slice(0, 8) }}…</p>
+          <h3 class="text-sm font-medium text-white leading-snug">
+            {{ selectedRow.question ?? 'Unknown market' }}
+          </h3>
+        </div>
+        <button class="text-gray-500 hover:text-gray-300 shrink-0 mt-0.5" @click="selectedRow = null">
+          <UIcon name="i-heroicons-x-mark" class="w-5 h-5" />
+        </button>
+      </div>
+
+      <!-- Quick stats -->
+      <div class="grid grid-cols-3 gap-px bg-gray-800 border-b border-gray-800">
+        <div class="bg-gray-950 px-4 py-3">
+          <p class="text-xs text-gray-500 mb-0.5">Entry</p>
+          <p class="font-mono text-sm text-gray-200">{{ (selectedRow.avg_price * 100).toFixed(1) }}¢</p>
+        </div>
+        <div class="bg-gray-950 px-4 py-3">
+          <p class="text-xs text-gray-500 mb-0.5">Now</p>
+          <p class="font-mono text-sm text-gray-200">
+            {{ selectedRow.current_prob != null ? (selectedRow.current_prob * 100).toFixed(1) + '¢' : '—' }}
+          </p>
+        </div>
+        <div class="bg-gray-950 px-4 py-3">
+          <p class="text-xs text-gray-500 mb-0.5">Drift</p>
+          <p class="font-mono text-sm" :class="driftClass(selectedRow.drift)">
+            {{ selectedRow.drift != null ? (selectedRow.drift > 0 ? '+' : '') + (selectedRow.drift * 100).toFixed(1) + '¢' : '—' }}
+          </p>
+        </div>
+        <div class="bg-gray-950 px-4 py-3">
+          <p class="text-xs text-gray-500 mb-0.5">Size</p>
+          <p class="font-mono text-sm text-gray-200">{{ formatSize(selectedRow.size, selectedRow.avg_price) }}</p>
+        </div>
+        <div class="bg-gray-950 px-4 py-3">
+          <p class="text-xs text-gray-500 mb-0.5">Score</p>
+          <p class="text-sm font-bold" :class="gradeClass(selectedRow.grade)">
+            {{ selectedRow.grade }} ({{ selectedRow.score.toFixed(0) }})
+          </p>
+        </div>
+        <div class="bg-gray-950 px-4 py-3">
+          <p class="text-xs text-gray-500 mb-0.5">Ends</p>
+          <p class="font-mono text-xs" :class="endsInClass(selectedRow.end_date_iso)">
+            {{ formatEndsIn(selectedRow.end_date_iso) }}
+          </p>
+        </div>
+      </div>
+
+      <!-- Price chart -->
+      <div class="p-4 border-b border-gray-800">
+        <div class="flex items-center gap-2 mb-3">
+          <UIcon name="i-heroicons-chart-bar-square" class="w-4 h-4 text-gray-500" />
+          <h4 class="text-xs font-medium text-gray-400 uppercase tracking-wide">Price History</h4>
+        </div>
+        <PriceHistoryChart
+          :condition-id="selectedRow.condition_id"
+          :outcome="selectedRow.outcome"
+          :wallet-address="selectedRow.wallet_address"
+          :avg-price="selectedRow.avg_price"
+          :current-prob="selectedRow.current_prob"
+        />
+      </div>
+
+      <!-- Whale quality metrics -->
+      <div class="p-4">
+        <div class="flex items-center gap-2 mb-3">
+          <UIcon name="i-heroicons-user-circle" class="w-4 h-4 text-gray-500" />
+          <h4 class="text-xs font-medium text-gray-400 uppercase tracking-wide">Whale Quality</h4>
+        </div>
+        <div class="space-y-2 text-sm">
+          <div class="flex justify-between">
+            <span class="text-gray-500">Wallet</span>
+            <AddressTag :address="selectedRow.wallet_address" short />
+          </div>
+          <div class="flex justify-between">
+            <span class="text-gray-500">Win rate</span>
+            <span class="font-mono text-gray-300">{{ formatPct(selectedRow.win_rate) }}</span>
+          </div>
+          <div class="flex justify-between">
+            <span class="text-gray-500">ROI</span>
+            <span class="font-mono" :class="(selectedRow.roi ?? 0) >= 0 ? 'text-green-400' : 'text-red-400'">
+              {{ selectedRow.roi != null ? (selectedRow.roi >= 0 ? '+' : '') + formatPct(selectedRow.roi) : '—' }}
+            </span>
+          </div>
+          <div class="flex justify-between">
+            <span class="text-gray-500">Brier score</span>
+            <span class="font-mono text-gray-300">
+              {{ selectedRow.brier_score != null ? selectedRow.brier_score.toFixed(3) : '—' }}
+            </span>
+          </div>
+          <div class="flex justify-between">
+            <span class="text-gray-500">Resolved trades</span>
+            <span class="font-mono text-gray-300">{{ selectedRow.resolved_trades }}</span>
+          </div>
+          <div class="flex justify-between">
+            <span class="text-gray-500">Type</span>
+            <span v-if="selectedRow.is_sharp" class="text-blue-400 text-xs font-medium">Sharp</span>
+            <span v-else-if="selectedRow.is_profitable" class="text-green-400 text-xs font-medium">Profitable</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </USlideover>
 </template>

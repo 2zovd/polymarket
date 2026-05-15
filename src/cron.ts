@@ -1,6 +1,7 @@
 import type { Logger } from 'pino';
 import type { DataApiClient } from './api/data.js';
 import type { GammaClient } from './api/gamma.js';
+import { detectCoordinatedEntries } from './analytics/anomaly-detector.js';
 import {
   collectMarkets,
   collectResolvedMarkets,
@@ -123,6 +124,9 @@ export function startCron(
     // Co-occurrence: find wallets that trade alongside confirmed sharps in the same markets.
     // Grows in effectiveness as the trades table accumulates historical depth.
     void runRepeating('wallets-cooccurrence', 7 * 24 * 60 * 60_000, () => collectCoOccurrenceWallets(dataApi, db, childLog), childLog);
+
+    // Anomaly detection: coordinated whale entries (2+ tracked whales, same outcome, within 4h).
+    void runRepeating('anomalies-coordinated', 30 * 60_000, () => detectCoordinatedEntries(db, childLog), childLog);
 
     if (duneApiKey) {
       const ids = duneQueryIds.length > 0 ? duneQueryIds : undefined;

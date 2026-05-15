@@ -24,6 +24,23 @@ interface ConsensusRow {
   whales: WhaleDetail[]
 }
 
+interface AnomalyMeta {
+  outcome: string
+  whale_count: number
+  earliest_entry: string | null
+  latest_entry: string | null
+  window_hours: string | null
+}
+
+interface Anomaly {
+  id: number
+  type: string
+  market_id: string | null
+  severity: string
+  detected_at: string
+  metadata: AnomalyMeta
+}
+
 const props = defineProps<{
   rows: ConsensusRow[]
   loading?: boolean
@@ -67,6 +84,40 @@ function formatSize(size: number, avgPrice: number): string {
 function sortIcon(key: string): string {
   return props.sort === key ? 'i-heroicons-arrow-down' : 'i-heroicons-arrows-up-down'
 }
+
+// Fetch coordinated-entry anomalies for all visible markets
+const marketIds = computed(() =>
+  [...new Set(props.rows.map((r) => r.condition_id))].join(','),
+)
+
+const { data: anomalyData } = useFetch<{ data: Anomaly[] }>('/api/anomalies', {
+  query: computed(() => ({ marketIds: marketIds.value, type: 'coordinated_entry' })),
+  server: false,
+  watch: [marketIds],
+})
+
+// Build a lookup: `${condition_id}-${outcome}` → anomaly
+const clusterMap = computed(() => {
+  const map = new Map<string, Anomaly>()
+  for (const a of anomalyData.value?.data ?? []) {
+    if (a.market_id && a.metadata?.outcome) {
+      const key = `${a.market_id}-${a.metadata.outcome}`
+      // Keep the most recent anomaly per key (data is already DESC)
+      if (!map.has(key)) map.set(key, a)
+    }
+  }
+  return map
+})
+
+function clusterAnomaly(r: ConsensusRow): Anomaly | null {
+  return clusterMap.value.get(rowKey(r)) ?? null
+}
+
+function clusterBadgeClass(severity: string): string {
+  if (severity === 'high') return 'bg-orange-500/20 text-orange-400 border-orange-500/40'
+  if (severity === 'medium') return 'bg-yellow-500/20 text-yellow-400 border-yellow-500/40'
+  return 'bg-gray-600/20 text-gray-400 border-gray-600/40'
+}
 </script>
 
 <template>
@@ -108,21 +159,22 @@ function sortIcon(key: string): string {
               <span>Drift</span>
             </UTooltip>
           </th>
-          <th class="pb-2 font-medium text-right">
+          <th class="pb-2 pr-4 font-medium text-right">
             <UTooltip text="When the market resolves">
               <span>Ends</span>
             </UTooltip>
           </th>
+          <th class="pb-2 font-medium text-right">Signal</th>
         </tr>
       </thead>
       <tbody>
         <tr v-if="loading">
-          <td colspan="9" class="py-4">
+          <td colspan="10" class="py-4">
             <USkeleton class="h-4 w-full" />
           </td>
         </tr>
         <tr v-else-if="!rows.length">
-          <td colspan="9" class="py-8 text-center text-gray-500">No consensus positions found</td>
+          <td colspan="10" class="py-8 text-center text-gray-500">No consensus positions found</td>
         </tr>
         <template v-for="r in rows" v-else :key="rowKey(r)">
           <tr
@@ -153,14 +205,28 @@ function sortIcon(key: string): string {
             <td class="py-2 pr-4 text-right font-mono" :class="driftClass(r.drift)">
               {{ r.drift != null ? (r.drift > 0 ? '+' : '') + (r.drift * 100).toFixed(1) + '¢' : '—' }}
             </td>
-            <td class="py-2 text-right font-mono text-xs" :class="endsInClass(r.end_date_iso)">
+            <td class="py-2 pr-4 text-right font-mono text-xs" :class="endsInClass(r.end_date_iso)">
               {{ formatEndsIn(r.end_date_iso) }}
+            </td>
+            <td class="py-2 text-right">
+              <UTooltip
+                v-if="clusterAnomaly(r)"
+                :text="`${clusterAnomaly(r)!.metadata.whale_count} whales entered within ${clusterAnomaly(r)!.metadata.window_hours}h`"
+              >
+                <span
+                  class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-xs font-medium border"
+                  :class="clusterBadgeClass(clusterAnomaly(r)!.severity)"
+                >
+                  <UIcon name="i-heroicons-bolt" class="w-3 h-3" />
+                  Cluster
+                </span>
+              </UTooltip>
             </td>
           </tr>
 
           <tr v-if="expanded.has(rowKey(r))" class="bg-gray-900/50">
             <td></td>
-            <td colspan="8" class="pt-1 pb-2">
+            <td colspan="9" class="pt-1 pb-2">
               <table class="w-full text-xs">
                 <thead>
                   <tr class="text-gray-600">
