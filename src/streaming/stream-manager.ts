@@ -1,8 +1,8 @@
-import { eq, or } from 'drizzle-orm';
+import { and, eq, or } from 'drizzle-orm';
 import type { Logger } from 'pino';
 import type { ClobClientWrapper } from '../api/clob.js';
 import type { DbClient } from '../db/index.js';
-import { walletStats, watchedPositions } from '../db/schema.js';
+import { markets, walletStats, watchedPositions } from '../db/schema.js';
 import type { AppConfig } from '../types.js';
 import { TradeEventHandler } from './event-handlers.js';
 import { MarketStream } from './market-stream.js';
@@ -95,16 +95,29 @@ export class StreamManager {
   }
 
   private async loadInitialTokenIds(): Promise<string[]> {
+    // Only subscribe to tokens of active, open markets — resolved/closed tokens generate
+    // no new events and waste subscription quota.
     const rows = await this.db
       .select({ tokenId: watchedPositions.tokenId })
       .from(watchedPositions)
       .innerJoin(walletStats, eq(watchedPositions.walletAddress, walletStats.walletAddress))
-      .where(or(eq(walletStats.isSharp, true), eq(walletStats.isProfitable, true)))
+      .innerJoin(markets, eq(watchedPositions.conditionId, markets.conditionId))
+      .where(
+        and(
+          or(eq(walletStats.isSharp, true), eq(walletStats.isProfitable, true)),
+          eq(markets.active, true),
+          eq(markets.closed, false),
+        ),
+      )
       .all();
 
     const unique = [...new Set(rows.map((r) => r.tokenId))];
-    this.log.info({ count: unique.length }, 'ws:initial_subscriptions_loaded');
-    return unique.slice(0, this.config.wsMaxSubscriptions);
+    const capped = unique.slice(0, this.config.wsMaxSubscriptions);
+    this.log.info(
+      { active: unique.length, subscribing: capped.length, cap: this.config.wsMaxSubscriptions },
+      'ws:initial_subscriptions_loaded',
+    );
+    return capped;
   }
 
   private async refreshTrackedWallets(): Promise<void> {

@@ -111,7 +111,7 @@ const EnvSchema = z.object({
   MAX_CHURN_RATIO: z.coerce.number().nonnegative().default(2.5),
   // ─── WebSocket Live Streaming ────────────────────────────────────────────────
   // Maximum number of simultaneously active WS market subscriptions.
-  WS_MAX_SUBSCRIPTIONS: z.coerce.number().int().positive().default(500),
+  WS_MAX_SUBSCRIPTIONS: z.coerce.number().int().positive().default(2000),
   // Maximum backoff delay (ms) for WS reconnection attempts.
   WS_RECONNECT_MAX_DELAY_MS: z.coerce.number().int().positive().default(30_000),
   // Minutes after which a WS-sourced signal is no longer considered a duplicate
