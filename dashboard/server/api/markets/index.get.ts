@@ -4,7 +4,7 @@ export default defineEventHandler((event) => {
   const query = getQuery(event)
   const page = Math.max(1, Number(query.page) || 1)
   const status = (query.status as string) || 'active'
-  const sort = query.sort === 'liquidity' ? 'liquidity_num' : 'volume_num'
+  const sort = query.sort === 'liquidity' ? 'liquidity_num' : query.sort === 'whales' ? 'whale_count' : 'volume_num'
   const search = ((query.q as string) || '').trim()
   const pageSize = 50
   const offset = (page - 1) * pageSize

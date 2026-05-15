@@ -14,7 +14,9 @@ export default defineEventHandler(() => {
        FROM watched_positions wp
        JOIN markets m ON m.condition_id = wp.condition_id
        JOIN wallet_stats ws ON ws.wallet_address = wp.wallet_address
-       WHERE ws.is_sharp = 1 OR ws.is_profitable = 1
+       WHERE (ws.is_sharp = 1 OR ws.is_profitable = 1)
+         AND m.accepting_orders = 1
+         AND (m.end_date_iso IS NULL OR m.end_date_iso > strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
        GROUP BY wp.condition_id
        ORDER BY whale_count DESC, total_exposure DESC
        LIMIT 50`,

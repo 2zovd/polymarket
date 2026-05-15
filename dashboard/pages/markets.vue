@@ -18,10 +18,10 @@ const { data, pending, refresh } = useFetch('/api/markets', {
   watch: [page, statusFilter, sortFilter, debouncedQuery],
 })
 
-const { data: candidatesData } = useFetch('/api/markets/candidates', { server: false })
+const { data: candidatesData, refresh: refreshCandidates } = useFetch('/api/markets/candidates', { server: false })
 
 onMounted(() => {
-  const t = setInterval(() => data.value && refresh(), 60_000)
+  const t = setInterval(() => { data.value && refresh(); refreshCandidates() }, 60_000)
   onUnmounted(() => clearInterval(t))
 })
 </script>
@@ -61,7 +61,7 @@ onMounted(() => {
           <div class="flex gap-1 items-center">
             <span class="text-xs text-gray-500">Sort:</span>
             <UButton
-              v-for="s in [{ label: 'Volume', value: 'volume' }, { label: 'Liquidity', value: 'liquidity' }]"
+              v-for="s in [{ label: 'Volume', value: 'volume' }, { label: 'Liquidity', value: 'liquidity' }, { label: 'Whales', value: 'whales' }]"
               :key="s.value"
               size="xs"
               :variant="sortFilter === s.value ? 'solid' : 'ghost'"
