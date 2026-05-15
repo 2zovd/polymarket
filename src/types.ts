@@ -200,4 +200,6 @@ export interface AppConfig {
    * 0 = disabled.
    */
   maxChurnRatio: number;
+  /** Dune query IDs to run for weekly wallet discovery. Supports multiple sources. */
+  duneQueryIds: number[];
 }

@@ -244,38 +244,176 @@ export async function refreshStaleWallets(
   childLog.info({ scored, flagged }, 'Stale wallet refresh complete');
 }
 
-// Dune query ID for top profitable Polymarket wallets.
-const DEFAULT_DUNE_QUERY_ID = 6979866;
+// Default Dune query: top profitable Polymarket wallets ranked by volume.
+const DEFAULT_DUNE_QUERY_IDS = [6979866];
 
-// Pull fresh addresses from Dune and seed them into wallet_stats.
-// Designed to run weekly — surfaces new profitable wallets automatically.
+// Pull fresh addresses from one or more Dune queries and seed them into wallet_stats.
+// Runs weekly — each query covers a different ranking dimension (volume, calibration, recency).
 export async function collectDuneWallets(
   duneApiKey: string,
   dataApi: DataApiClient,
   db: DbClient,
   log: Logger,
-  queryId = DEFAULT_DUNE_QUERY_ID,
+  queryIds: number[] = DEFAULT_DUNE_QUERY_IDS,
   limit = 500,
 ): Promise<void> {
-  const childLog = log.child({ collector: 'wallets-dune', queryId });
-
-  childLog.info({ queryId, limit }, 'Fetching Dune query results');
+  const childLog = log.child({ collector: 'wallets-dune', queryIds });
 
   const dune = createDuneClient(duneApiKey);
-  let result: Awaited<ReturnType<typeof dune.getQueryResults>>;
-  try {
-    result = await dune.getQueryResults(queryId, limit);
-  } catch (err) {
-    childLog.error({ err }, 'Dune API request failed — skipping this cycle');
+  const allAddresses = new Set<string>();
+
+  for (const queryId of queryIds) {
+    childLog.info({ queryId, limit }, 'Fetching Dune query results');
+    try {
+      const result = await dune.getQueryResults(queryId, limit);
+      const addresses = extractAddresses(result.rows);
+      if (addresses.length === 0) {
+        childLog.warn({ queryId, rowCount: result.rows.length }, 'No addresses in Dune results');
+      } else {
+        childLog.info({ queryId, addresses: addresses.length }, 'Dune addresses extracted');
+        for (const a of addresses) allAddresses.add(a);
+      }
+    } catch (err) {
+      childLog.error({ queryId, err }, 'Dune query failed — skipping');
+    }
+  }
+
+  if (allAddresses.size === 0) return;
+
+  childLog.info({ total: allAddresses.size }, 'Seeding deduplicated Dune addresses');
+  await seedWallets([...allAddresses], dataApi, db, childLog);
+}
+
+// Markets to mine per cron run. At 250ms/call this takes ~12s for the mining phase.
+const MAX_MARKETS_PER_WINNER_RUN = 50;
+// Cap on new addresses to score per run — prevents multi-hour scoring marathons.
+// Cron runs every 6h, so across 4 runs/day we process up to 4×300=1200 new addresses/day.
+const MAX_NEW_ADDRESSES_PER_WINNER_RUN = 300;
+
+// Mine top traders from high-volume resolved markets and seed them into wallet_stats.
+// Uses Data API /trades?market= which returns all participants for a given conditionId.
+// Ordered by volume so the most liquid (most traders) markets are always mined first.
+// Pre-filters addresses already in wallet_stats to avoid redundant scoring.
+export async function collectMarketWinners(
+  dataApi: DataApiClient,
+  db: DbClient,
+  log: Logger,
+): Promise<void> {
+  const childLog = log.child({ collector: 'market-winners' });
+
+  const resolvedMarkets = await db
+    .select({ conditionId: markets.conditionId })
+    .from(markets)
+    .where(
+      and(
+        inArray(markets.status, ['resolved', 'closed']),
+        notLike(markets.question, '%Up or Down%'),
+        sql`outcome_prices IS NOT NULL`,
+      ),
+    )
+    .orderBy(sql`volume_num DESC`)
+    .limit(MAX_MARKETS_PER_WINNER_RUN)
+    .all();
+
+  if (resolvedMarkets.length === 0) {
+    childLog.info('No resolved markets with outcome data to mine');
     return;
   }
 
-  const addresses = extractAddresses(result.rows);
-  if (addresses.length === 0) {
-    childLog.warn({ rowCount: result.rows.length }, 'No Ethereum addresses found in Dune results');
+  childLog.info({ count: resolvedMarkets.length }, 'Mining traders from resolved markets');
+
+  const allAddresses = new Set<string>();
+
+  for (const { conditionId } of resolvedMarkets) {
+    try {
+      const marketTrades = await dataApi.getMarketTrades(conditionId, 500);
+      await sleep(INTER_REQUEST_DELAY_MS);
+      for (const trade of marketTrades) {
+        if (trade.side === 'BUY' && trade.proxyWallet) {
+          allAddresses.add(trade.proxyWallet.toLowerCase());
+        }
+      }
+    } catch (err) {
+      childLog.warn({ conditionId, err }, 'Failed to fetch market trades — skipping');
+    }
+  }
+
+  if (allAddresses.size === 0) {
+    childLog.warn('No addresses extracted from market trades');
     return;
   }
 
-  childLog.info({ addresses: addresses.length }, 'Dune addresses extracted — seeding');
-  await seedWallets(addresses, dataApi, db, childLog);
+  // Filter out addresses already scored — avoid re-scoring known wallets every run.
+  const existingSet = new Set(
+    db
+      .select({ walletAddress: walletStats.walletAddress })
+      .from(walletStats)
+      .all()
+      .map((r) => r.walletAddress),
+  );
+
+  const novel = [...allAddresses]
+    .filter((a) => !existingSet.has(a))
+    .slice(0, MAX_NEW_ADDRESSES_PER_WINNER_RUN);
+
+  childLog.info(
+    { total: allAddresses.size, existing: existingSet.size, novel: novel.length },
+    'Market winner addresses extracted — seeding novel addresses',
+  );
+
+  if (novel.length === 0) {
+    childLog.info('All discovered addresses already scored');
+    return;
+  }
+
+  await seedWallets(novel, dataApi, db, childLog);
+}
+
+// Minimum number of distinct markets a wallet must co-trade with sharps to be considered.
+const MIN_CO_OCCURRENCE_MARKETS = 3;
+
+// Find wallets that consistently trade the same markets in the same direction as confirmed sharps.
+// These "fellow travellers" share an information source or analytical framework with known winners.
+// Effectiveness grows with trades-table depth — weak in week 1, strong after month 1+.
+export async function collectCoOccurrenceWallets(
+  dataApi: DataApiClient,
+  db: DbClient,
+  log: Logger,
+): Promise<void> {
+  const childLog = log.child({ collector: 'wallets-cooccurrence' });
+
+  const candidates = db.all<{ wallet_address: string; co_markets: number }>(sql`
+    SELECT t2.wallet_address,
+           COUNT(DISTINCT t2.market) AS co_markets,
+           COUNT(*)                  AS co_trades
+    FROM trades t1
+    JOIN trades t2
+      ON  t1.market           = t2.market
+      AND t2.side             = 'BUY'
+      AND t2.match_time BETWEEN datetime(t1.match_time, '-4 hours')
+                            AND datetime(t1.match_time, '+4 hours')
+      AND t2.wallet_address  != t1.wallet_address
+    WHERE t1.wallet_address IN (
+            SELECT wallet_address FROM wallet_stats WHERE is_sharp = 1
+          )
+      AND t1.side        = 'BUY'
+      AND t1.match_time  > datetime('now', '-30 days')
+    GROUP BY t2.wallet_address
+    HAVING COUNT(DISTINCT t2.market) >= ${MIN_CO_OCCURRENCE_MARKETS}
+    ORDER BY COUNT(DISTINCT t2.market) DESC
+    LIMIT 500
+  `);
+
+  if (candidates.length === 0) {
+    childLog.info('No co-occurrence candidates found (trades table may be too sparse)');
+    return;
+  }
+
+  childLog.info({ candidates: candidates.length }, 'Co-occurrence candidates found — seeding');
+  await seedWallets(
+    candidates.map((r) => r.wallet_address),
+    dataApi,
+    db,
+    childLog,
+  );
 }

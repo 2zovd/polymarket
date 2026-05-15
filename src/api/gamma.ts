@@ -26,6 +26,17 @@ export interface GammaTrade {
   trader_side?: string;
 }
 
+// Shape returned by GET /markets/{conditionId}/traders.
+// Exact field names vary by market; address is always present as some 0x-hex string value.
+export interface GammaMarketTrader {
+  proxy_wallet?: string;
+  proxyWallet?: string;
+  profit?: number;
+  pnl?: number;
+  volume?: number;
+  [key: string]: unknown;
+}
+
 export function createGammaClient(config: AppConfig, log: Logger) {
   const http: AxiosInstance = axios.create({
     baseURL: config.gammaApiUrl,
@@ -84,11 +95,11 @@ export function createGammaClient(config: AppConfig, log: Logger) {
 
     /**
      * Top traders for a market by profit — primary source for whale identification.
-     * Returns raw Gamma API response; types are unverified and may vary by market.
+     * Field names vary by market; always contains at least one address-shaped string value.
      */
-    async getMarketTraders(conditionId: string, limit = 50): Promise<unknown[]> {
+    async getMarketTraders(conditionId: string, limit = 50): Promise<GammaMarketTrader[]> {
       childLog.debug({ conditionId, limit }, 'Fetching market traders');
-      const { data } = await http.get<unknown[]>(`/markets/${conditionId}/traders`, {
+      const { data } = await http.get<GammaMarketTrader[]>(`/markets/${conditionId}/traders`, {
         params: { limit },
       });
       childLog.info({ conditionId, count: data.length }, 'Traders fetched');

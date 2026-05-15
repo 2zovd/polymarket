@@ -116,6 +116,17 @@ export function createDataApiClient(config: AppConfig, log: Logger) {
     },
 
     /**
+     * All BUY trades for a specific market, up to limit rows.
+     * Used to extract trader addresses from resolved markets for wallet seeding.
+     */
+    async getMarketTrades(conditionId: string, limit = 500): Promise<DataApiTrade[]> {
+      const { data } = await http.get<DataApiTrade[]>('/trades', {
+        params: { market: conditionId, limit },
+      });
+      return data;
+    },
+
+    /**
      * Current open positions for a specific wallet address.
      * Returns all positions in a single request (no pagination needed — typically <500 per wallet).
      */

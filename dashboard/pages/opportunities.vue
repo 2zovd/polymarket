@@ -117,7 +117,7 @@ const resultCount = computed(() =>
             <!-- Ends within -->
             <div class="flex items-center gap-2">
               <span class="text-xs text-gray-400">Ends in:</span>
-              <div class="flex gap-1">
+              <div class="flex flex-wrap gap-1">
                 <UButton
                   v-for="h in [{ label: 'Any', value: 'all' }, { label: '2h', value: '2h' }, { label: '6h', value: '6h' }, { label: '1d', value: '1d' }, { label: '3d', value: '3d' }, { label: '7d', value: '7d' }, { label: '30d', value: '30d' }]"
                   :key="h.value"
@@ -132,7 +132,7 @@ const resultCount = computed(() =>
             <!-- Min resolved trades -->
             <div class="flex items-center gap-2">
               <span class="text-xs text-gray-400">Min trades:</span>
-              <div class="flex gap-1">
+              <div class="flex flex-wrap gap-1">
                 <UButton
                   v-for="n in [5, 10, 20]"
                   :key="n"

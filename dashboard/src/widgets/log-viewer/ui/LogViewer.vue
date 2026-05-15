@@ -32,7 +32,7 @@ function onScroll() {
 <template>
   <div
     ref="containerRef"
-    class="h-[calc(100vh-12rem)] overflow-y-auto bg-gray-950 rounded-lg border border-gray-800 p-2 font-mono"
+    class="h-[calc(100dvh-16rem)] md:h-[calc(100dvh-12rem)] overflow-y-auto bg-gray-950 rounded-lg border border-gray-800 p-2 font-mono"
     @scroll="onScroll"
   >
     <div v-if="!filtered.length" class="flex items-center justify-center h-20 text-gray-600 text-sm">

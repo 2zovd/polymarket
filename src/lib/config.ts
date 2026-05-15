@@ -57,6 +57,17 @@ const EnvSchema = z.object({
   TELEGRAM_BOT_TOKEN: z.string().optional(),
   TELEGRAM_CHAT_ID: z.string().optional(),
   DUNE_API_KEY: z.string().optional(),
+  // Comma-separated list of Dune query IDs for weekly wallet discovery.
+  // Default: 6979866 (top profitable wallets by volume). Add more to expand coverage.
+  DUNE_QUERY_IDS: z
+    .string()
+    .transform((v) =>
+      v
+        .split(',')
+        .map((id) => Number.parseInt(id.trim(), 10))
+        .filter((id) => !Number.isNaN(id) && id > 0),
+    )
+    .default('6979866'),
   MAX_OPEN_POSITIONS: z.coerce.number().int().positive().default(20),
   // Skip markets closing within this many hours. Set to 0 to allow micro-markets (5-min, 1-hour).
   MIN_MARKET_HOURS_REMAINING: z.coerce.number().nonnegative().default(4),
@@ -163,6 +174,7 @@ function loadConfig(): AppConfig {
     minProfitableAvgPos: env.MIN_PROFITABLE_AVG_POS,
     maxMicroPositionRatio: env.MAX_MICRO_POSITION_RATIO,
     maxChurnRatio: env.MAX_CHURN_RATIO,
+    duneQueryIds: env.DUNE_QUERY_IDS,
   };
 }
 

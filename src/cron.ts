@@ -9,7 +9,9 @@ import {
 import { collectPositions } from './collectors/positions.js';
 import { collectTrades } from './collectors/trades.js';
 import {
+  collectCoOccurrenceWallets,
   collectDuneWallets,
+  collectMarketWinners,
   collectWalletStats,
   refreshStaleWallets,
 } from './collectors/wallets.js';
@@ -48,6 +50,7 @@ export function startCron(
   db: DbClient,
   log: Logger,
   duneApiKey?: string | null,
+  duneQueryIds: number[] = [],
 ): void {
   const childLog = log.child({ module: 'cron' });
 
@@ -113,9 +116,18 @@ export function startCron(
     void runRepeating('wallets-refresh', 24 * 60 * 60_000, () => refreshStaleWallets(dataApi, db, childLog), childLog);
     void runRepeating('db-vacuum', 7 * 24 * 60 * 60_000, () => vacuumDb(db, childLog), childLog);
 
+    // Market-winners: mine top traders from recently resolved markets every 6h.
+    // Finds wallets invisible to volume-based scoring — verifies them through ground-truth wins.
+    void runRepeating('market-winners', 6 * 60 * 60_000, () => collectMarketWinners(dataApi, db, childLog), childLog);
+
+    // Co-occurrence: find wallets that trade alongside confirmed sharps in the same markets.
+    // Grows in effectiveness as the trades table accumulates historical depth.
+    void runRepeating('wallets-cooccurrence', 7 * 24 * 60 * 60_000, () => collectCoOccurrenceWallets(dataApi, db, childLog), childLog);
+
     if (duneApiKey) {
-      void runRepeating('wallets-dune', 7 * 24 * 60 * 60_000, () => collectDuneWallets(duneApiKey, dataApi, db, childLog), childLog);
-      childLog.info('Dune weekly discovery scheduled');
+      const ids = duneQueryIds.length > 0 ? duneQueryIds : undefined;
+      void runRepeating('wallets-dune', 7 * 24 * 60 * 60_000, () => collectDuneWallets(duneApiKey, dataApi, db, childLog, ids), childLog);
+      childLog.info({ queryIds: ids ?? [6979866] }, 'Dune weekly discovery scheduled');
     }
 
     childLog.info(

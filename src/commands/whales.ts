@@ -5,7 +5,13 @@ import { createDataApiClient } from '../api/data.js';
 import { createDuneClient, extractAddresses } from '../api/dune.js';
 import { createGammaClient } from '../api/gamma.js';
 import { collectResolvedMarkets } from '../collectors/markets.js';
-import { collectWalletStats, refreshStaleWallets, seedWallets } from '../collectors/wallets.js';
+import { collectMarketWinners } from '../collectors/wallets.js';
+import {
+  collectCoOccurrenceWallets,
+  collectWalletStats,
+  refreshStaleWallets,
+  seedWallets,
+} from '../collectors/wallets.js';
 import { createDb } from '../db/index.js';
 import { walletStats } from '../db/schema.js';
 import { config } from '../lib/config.js';
@@ -158,6 +164,38 @@ export function registerWhalesCommand(program: Command): void {
       const db = createDb(config.databasePath);
 
       await seedWallets(addresses, dataApi, db, logger);
+      print('Done. Run: pnpm dev whales top --profitable');
+    });
+
+  whales
+    .command('winners')
+    .description(
+      'Mine top traders from recently resolved markets and seed into wallet_stats (fetches markets first)',
+    )
+    .action(async () => {
+      const gamma = createGammaClient(config, logger);
+      const dataApi = createDataApiClient(config, logger);
+      const db = createDb(config.databasePath);
+
+      print('Fetching resolved markets for outcome data...');
+      await collectResolvedMarkets(gamma, db, logger);
+
+      print('Mining top traders from recently resolved markets...');
+      await collectMarketWinners(dataApi, db, logger);
+      print('Done. Run: pnpm dev whales top --profitable');
+    });
+
+  whales
+    .command('cooccur')
+    .description(
+      'Find wallets that co-trade with confirmed sharps (same market, same direction, ±4h window)',
+    )
+    .action(async () => {
+      const dataApi = createDataApiClient(config, logger);
+      const db = createDb(config.databasePath);
+
+      print('Scanning trades table for co-occurrence candidates...');
+      await collectCoOccurrenceWallets(dataApi, db, logger);
       print('Done. Run: pnpm dev whales top --profitable');
     });
 
